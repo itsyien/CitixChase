@@ -546,7 +546,9 @@ void UCitixVehicleMovementComponent::ApplyGroundedDriftResponse(float DeltaTime,
 		FVector2D(500.f, 1800.f), FVector2D(0.f, 1.f), PlanarSpeed);
 	const float SpeedAuthority = FMath::GetMappedRangeValueClamped(
 		FVector2D(3000.f, FMath::Max(3001.f, MaxSpeed)), FVector2D(1.f, .65f), PlanarSpeed);
-	const float TargetYaw = bTurning ? SteeringInput * FMath::Clamp(DriftYawRateDegrees, 0.f, 120.f) * LowSpeedBlend * SpeedAuthority : 0.f;
+	const float LockScale=FMath::GetMappedRangeValueClamped(FVector2D(0.f,MaxSpeed),FVector2D(1.f,HighSpeedSteerFraction),FMath::Abs(ForwardSpeed));
+	const float ProgressiveInput=FMath::Clamp(CurrentSteerAngle/FMath::Max(1.f,MaxSteerAngle*DriftSteerAuthority*LockScale),-1.f,1.f);
+	const float TargetYaw = bTurning ? ProgressiveInput * FMath::Clamp(DriftYawRateDegrees, 0.f, 120.f) * LowSpeedBlend * SpeedAuthority : 0.f;
 	FVector AngularVelocity = Body.GetPhysicsAngularVelocityInDegrees();
 	// Steering release needs more damping than entry: merely fading the yaw
 	// controller out would leave residual spin while the handbrake is held.

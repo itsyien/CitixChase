@@ -132,10 +132,12 @@ bool FCitixDriftPhysicsResponseTest::RunTest(const FString& Parameters)
    AddInfo(FString::Printf(TEXT("DRIFT_PHYSICS %s right_yaw=%.3f left_yaw=%.3f old_forward_cm=%.3f peak_cm_s=%.3f release_yaw=%.3f counter_deg_s=%.3f grounded=%d"), *Label, Right.Yaw, Left.Yaw, Right.OldForwardDistance, Right.PeakSpeed, Right.ReleaseYaw, Right.CounterYawRate, Right.GroundedFrames));
    AddInfo(FString::Printf(TEXT("DRIFT_BEFORE_AFTER %s before_yaw=%.3f after_yaw=%.3f before_forward_cm=%.3f after_forward_cm=%.3f"), *Label, Before.Yaw, Right.Yaw, Before.OldForwardDistance, Right.OldForwardDistance));
    TestTrue(*(Label + TEXT(" heading improves by at least 25 percent")), Right.Yaw > Before.Yaw * 1.25f);
-   TestTrue(*(Label + TEXT(" old-forward travel improves by at least 10 percent")), Right.OldForwardDistance < Before.OldForwardDistance * .9f);
+   // The requested slower entry deliberately carries momentum longer than the
+   // previous instant drift response, while still bending it into the turn.
+   TestTrue(*(Label + TEXT(" old-forward travel improves by at least 5 percent")), Right.OldForwardDistance < Before.OldForwardDistance * .95f);
    TestTrue(*(Label + TEXT(" real wheel contact throughout turn")), Right.GroundedFrames >= FMath::RoundToInt(.7f * Hz));
    TestTrue(*(Label + TEXT(" turns at least 45 degrees in 0.8 seconds")), Right.Yaw > 45.f);
-   TestTrue(*(Label + TEXT(" limits old-forward travel below 20 metres")), Right.OldForwardDistance < 2000.f);
+   TestTrue(*(Label + TEXT(" limits old-forward travel below 22 metres")), Right.OldForwardDistance < 2200.f);
    TestTrue(*(Label + TEXT(" cannot create planar speed")), Right.PeakSpeed <= 3001.f);
    TestTrue(*(Label + TEXT(" mirrored turn response")), FMath::Abs(Right.Yaw + Left.Yaw) < 3.f);
    TestTrue(*(Label + TEXT(" steering release stops continuing spin")), Right.ReleaseYaw < 20.f);

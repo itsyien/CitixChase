@@ -8,6 +8,9 @@ public class Citix : ModuleRules
 	public Citix(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+		// Procedural generators use file-local helpers with overlapping names.
+		// Compile each translation unit independently as new source files are added.
+		bUseUnity = false;
 
 		PublicDependencyModuleNames.AddRange(new string[] {
 			"Core",

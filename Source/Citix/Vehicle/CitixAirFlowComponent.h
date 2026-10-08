@@ -18,4 +18,5 @@ public:
 private:
  UPROPERTY() TObjectPtr<UMaterialInterface> RibbonMaterial;
  float Strength=0.f;
+ float SubmittedStrength=-1.f;
 };

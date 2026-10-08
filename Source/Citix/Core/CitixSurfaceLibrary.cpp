@@ -587,6 +587,7 @@ const TCHAR* FCitixSurfaceLibrary::GetSurfaceName(ECitixSurface Surface)
 	case ECitixSurface::Lamp: return TEXT("Lamp");
 	case ECitixSurface::Trunk: return TEXT("Trunk");
 	case ECitixSurface::Foliage: return TEXT("Foliage");
+	case ECitixSurface::Bush: return TEXT("Bush");
 	case ECitixSurface::EmissiveWarm: return TEXT("EmissiveWarm");
 	case ECitixSurface::EmissiveCool: return TEXT("EmissiveCool");
 	case ECitixSurface::CarPaint: return TEXT("CarPaint");

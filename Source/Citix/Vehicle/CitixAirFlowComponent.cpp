@@ -48,8 +48,10 @@ void UCitixAirFlowComponent::TickComponent(float Dt,ELevelTick TickType,FActorCo
  Strength=FMath::FInterpTo(Strength,Target,Dt,Target>Strength ? 8.f : 12.f);
  if (Strength<.005f) Strength=0;
  Ribbons->SetVisibility(Strength>0);
- if (Strength>0) {
+ // Time-based pulses run in the material; only upload a visible intensity change.
+ if (Strength>0 && FMath::Abs(Strength-SubmittedStrength)>.002f) {
   for (int32 I=0;I<Ribbons->GetInstanceCount();++I) Ribbons->SetCustomDataValue(I,0,Strength,false);
   Ribbons->MarkRenderStateDirty();
+  SubmittedStrength=Strength;
  }
 }

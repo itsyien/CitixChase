@@ -3,6 +3,7 @@
 #include "Engine/GameInstance.h"
 #include "Chase/CitixIceWave.h"
 #include "Chase/CitixIceProbe.h"
+#include "Chase/CitixRoadsideVisualProbe.h"
 #include "Core/CitixGraphicsSettings.h"
 #include "Chase/CitixSettingsWidget.h"
 #include "Camera/CameraActor.h"
@@ -486,6 +487,7 @@ void ACitixDrivingPlayerController::Tick(float DeltaSeconds)
   }
  }
  if (FParse::Param(FCommandLine::Get(),TEXT("CitixIceScreenshot"))) CitixIceVisualProbeTick(this);
+ if (FParse::Param(FCommandLine::Get(),TEXT("CitixRoadsideVisualProbe"))) CitixRoadsideVisualProbeTick(this);
  if (IsLocalController() && FParse::Param(FCommandLine::Get(),TEXT("CitixSmokeScreenshot"))) {
   static bool BriefShot=false;
   const auto* BriefState=GetWorld()->GetGameState<ACitixChaseGameState>();

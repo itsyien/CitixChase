@@ -27,18 +27,25 @@ bool CitixCreateRoadsideAssets()
   FSavePackageArgs Args; Args.TopLevelFlags=RF_Public|RF_Standalone;
   return UPackage::SavePackage(Asset->GetOutermost(),Asset,*Filename,Args);
  };
+ auto FullPackage=[](const FString& Path) {
+  UPackage* Package=LoadPackage(nullptr,*Path,LOAD_None);
+  if (!Package) Package=CreatePackage(*Path);
+  Package->FullyLoad(); return Package;
+ };
  const FString MatPath=TEXT("/Game/Citix/Materials/M_CitixBush");
- auto* Bush=NewObject<UMaterial>(CreatePackage(*MatPath),TEXT("M_CitixBush"),RF_Public|RF_Standalone);
- Bush->TwoSided=true; Bush->bUsedWithInstancedStaticMeshes=true;
+ auto* BushPackage=FullPackage(MatPath); auto* Bush=FindObject<UMaterial>(BushPackage,TEXT("M_CitixBush"));
+ if (!Bush) Bush=NewObject<UMaterial>(BushPackage,TEXT("M_CitixBush"),RF_Public|RF_Standalone);
+ Bush->GetExpressionCollection().Empty(); Bush->TwoSided=true; Bush->SetUsageByFlag(MATUSAGE_InstancedStaticMeshes,true);
  auto* Colour=Cast<UMaterialExpressionVertexColor>(UMaterialEditingLibrary::CreateMaterialExpression(Bush,UMaterialExpressionVertexColor::StaticClass()));
- UMaterialEditingLibrary::ConnectMaterialProperty(Colour,TEXT("RGB"),MP_BaseColor);
+ UMaterialEditingLibrary::ConnectMaterialProperty(Colour,TEXT(""),MP_BaseColor);
  auto* Rough=Cast<UMaterialExpressionConstant>(UMaterialEditingLibrary::CreateMaterialExpression(Bush,UMaterialExpressionConstant::StaticClass())); Rough->R=.88f;
  UMaterialEditingLibrary::ConnectMaterialProperty(Rough,TEXT(""),MP_Roughness);
  UMaterialEditingLibrary::RecompileMaterial(Bush);
  if (!Save(Bush,MatPath)) return false;
 
  const FString MeshPath=TEXT("/Game/Citix/Meshes/SM_CitixBush");
- auto* Mesh=NewObject<UStaticMesh>(CreatePackage(*MeshPath),TEXT("SM_CitixBush"),RF_Public|RF_Standalone);
+ auto* MeshPackage=FullPackage(MeshPath); auto* Mesh=FindObject<UStaticMesh>(MeshPackage,TEXT("SM_CitixBush"));
+ if (!Mesh) Mesh=NewObject<UStaticMesh>(MeshPackage,TEXT("SM_CitixBush"),RF_Public|RF_Standalone);
  FMeshDescription Description; FStaticMeshAttributes Attr(Description); Attr.Register(); Attr.GetVertexInstanceUVs().SetNumChannels(1);
  auto Positions=Attr.GetVertexPositions(); auto Normals=Attr.GetVertexInstanceNormals(); auto Colors=Attr.GetVertexInstanceColors(); auto UVs=Attr.GetVertexInstanceUVs();
  const auto Group=Description.CreatePolygonGroup(); Attr.GetPolygonGroupMaterialSlotNames()[Group]=TEXT("Leaves");
@@ -53,45 +60,53 @@ bool CitixCreateRoadsideAssets()
   Description.CreatePolygon(Group,Instances); ++Triangles;
  };
  FRandomStream Rng(1337);
- // Twelve irregular woody stems carry many pointed, folded leaves. There is no
- // spherical canopy: silhouette, open gaps and varied green faces come from leaves.
- for (int32 Stem=0;Stem<12;++Stem) {
-  const float Angle=Stem*137.5f;
-  const FVector Start(Rng.FRandRange(-12,12),Rng.FRandRange(-12,12),-48);
-  const FVector End=FRotator(0,Angle,0).Vector()*Rng.FRandRange(22,39)+FVector(0,0,Rng.FRandRange(16,36));
-  const FVector Axis=(End-Start).GetSafeNormal(); FVector Side,Up; Axis.FindBestAxisVectors(Side,Up);
-  for (int32 SideIndex=0;SideIndex<5;++SideIndex) {
-   const FVector A=Side*FMath::Cos(SideIndex*2*PI/5)+Up*FMath::Sin(SideIndex*2*PI/5);
-   const FVector B=Side*FMath::Cos((SideIndex+1)*2*PI/5)+Up*FMath::Sin((SideIndex+1)*2*PI/5);
-   Tri(Start+A*1.3f,Start+B*1.3f,End+B*.45f,FLinearColor(.12f,.075f,.035f));
-   Tri(Start+A*1.3f,End+B*.45f,End+A*.45f,FLinearColor(.12f,.075f,.035f));
+ // Overlapping icosahedral lobes form a broad, irregular low-poly bush.
+ // Each lobe has twenty flat faces; no smooth single-sphere canopy.
+ const float G=(1.f+FMath::Sqrt(5.f))*.5f;
+ const FVector LobeVertices[]={ {-1,G,0},{1,G,0},{-1,-G,0},{1,-G,0},
+  {0,-1,G},{0,1,G},{0,-1,-G},{0,1,-G},{G,0,-1},{G,0,1},{-G,0,-1},{-G,0,1} };
+ const int32 Faces[][3]={{0,11,5},{0,5,1},{0,1,7},{0,7,10},{0,10,11},
+  {1,5,9},{5,11,4},{11,10,2},{10,7,6},{7,1,8},
+  {3,9,4},{3,4,2},{3,2,6},{3,6,8},{3,8,9},
+  {4,9,5},{2,4,11},{6,2,10},{8,6,7},{9,8,1}};
+ const FVector Centers[]={{-28,-12,-12},{-6,-19,-9},{20,-16,-12},
+  {30,7,-10},{6,17,-6},{-24,14,-13},{-16,-1,10},{10,-1,14},{0,8,25}};
+ for (int32 Lobe=0;Lobe<UE_ARRAY_COUNT(Centers);++Lobe) {
+  const FVector Radius(Rng.FRandRange(18,25),Rng.FRandRange(17,23),Rng.FRandRange(18,25));
+  const FRotator Rotation(Rng.FRandRange(-20,20),Lobe*47.f,Rng.FRandRange(-15,15));
+  const float Shade=Rng.FRandRange(.85f,1.15f);
+  for (const auto& Face:Faces) {
+   const FLinearColor Green=FLinearColor(.10f,.30f,.055f)*Shade*Rng.FRandRange(.9f,1.08f);
+   Tri(Centers[Lobe]+Rotation.RotateVector(LobeVertices[Face[0]].GetSafeNormal()*Radius),
+       Centers[Lobe]+Rotation.RotateVector(LobeVertices[Face[1]].GetSafeNormal()*Radius),
+       Centers[Lobe]+Rotation.RotateVector(LobeVertices[Face[2]].GetSafeNormal()*Radius),Green);
   }
-  for (int32 Leaf=0;Leaf<22;++Leaf) {
-   const float T=.22f+.78f*(Leaf/21.f);
-   const FVector P=FMath::Lerp(Start,End,T);
-   const FVector Out=FRotator(Rng.FRandRange(-45,30),Angle+Leaf*151.f,0).Vector();
-   const FVector Across=FVector::CrossProduct(Out,FVector::UpVector).GetSafeNormal();
-   const float Length=Rng.FRandRange(9,17),Width=Length*.34f;
-   const FVector Tip=P+Out*Length,Left=P+Out*(Length*.42f)+Across*Width,Right=P+Out*(Length*.42f)-Across*Width,Ridge=P+Out*(Length*.52f)+FVector(0,0,2.4f);
-   const float Shade=Rng.FRandRange(.75f,1.25f);
-   const FLinearColor Green(.12f*Shade,.34f*Shade,.075f*Shade);
-   Tri(P,Left,Ridge,Green); Tri(Left,Tip,Ridge,Green*1.07f); Tri(Tip,Right,Ridge,Green*.85f); Tri(Right,P,Ridge,Green*.9f);
+ }
+ // Short angular stems ground the canopy without adding fine foliage noise.
+ for (int32 Stem=0;Stem<3;++Stem) {
+  const FVector Start((Stem-1)*11,0,-43),End((Stem-1)*16,0,-8);
+  for (int32 Side=0;Side<4;++Side) {
+   const FVector A(FMath::Cos(Side*PI/2)*2,FMath::Sin(Side*PI/2)*2,0);
+   const FVector B(FMath::Cos((Side+1)*PI/2)*2,FMath::Sin((Side+1)*PI/2)*2,0);
+   Tri(Start+A,Start+B,End+B,FLinearColor(.12f,.075f,.035f));
+   Tri(Start+A,End+B,End+A,FLinearColor(.12f,.075f,.035f));
   }
  }
  // Normalize the authored bush to the same centred 100 cm convention as city instances.
  FBox Bounds(ForceInit); for (const auto V:Description.Vertices().GetElementIDs()) Bounds+=FVector(Positions[V]);
  for (const auto V:Description.Vertices().GetElementIDs()) Positions[V]=FVector3f((FVector(Positions[V])-Bounds.GetCenter())/Bounds.GetSize()*100.f);
- Mesh->GetStaticMaterials().Add(FStaticMaterial(Bush,TEXT("Leaves")));
+ Mesh->GetStaticMaterials().Reset(); Mesh->GetStaticMaterials().Add(FStaticMaterial(Bush,TEXT("Leaves")));
  UStaticMesh::FBuildMeshDescriptionsParams Build; Build.bBuildSimpleCollision=false; Build.bCommitMeshDescription=true;
  if (!Mesh->BuildFromMeshDescriptions({&Description},Build)) return false;
  Mesh->CreateBodySetup(); auto* Body=Mesh->GetBodySetup(); Body->CollisionTraceFlag=CTF_UseSimpleAsComplex;
- FKBoxElem Box; Box.X=85; Box.Y=85; Box.Z=90; Body->AggGeom.BoxElems.Add(Box);
+ Body->AggGeom.EmptyElements(); FKBoxElem Box; Box.X=85; Box.Y=85; Box.Z=90; Body->AggGeom.BoxElems.Add(Box);
  Body->InvalidatePhysicsData(); Body->CreatePhysicsMeshes();
  if (!Save(Mesh,MeshPath)) return false;
 
  const FString AirPath=TEXT("/Game/Citix/Materials/M_CitixAirFlow");
- auto* Air=NewObject<UMaterial>(CreatePackage(*AirPath),TEXT("M_CitixAirFlow"),RF_Public|RF_Standalone);
- Air->BlendMode=BLEND_Additive; Air->SetShadingModel(MSM_Unlit); Air->TwoSided=true; Air->bUsedWithInstancedStaticMeshes=true;
+ auto* AirPackage=FullPackage(AirPath); auto* Air=FindObject<UMaterial>(AirPackage,TEXT("M_CitixAirFlow"));
+ if (!Air) Air=NewObject<UMaterial>(AirPackage,TEXT("M_CitixAirFlow"),RF_Public|RF_Standalone);
+ Air->GetExpressionCollection().Empty(); Air->BlendMode=BLEND_Additive; Air->SetShadingModel(MSM_Unlit); Air->TwoSided=true; Air->SetUsageByFlag(MATUSAGE_InstancedStaticMeshes,true);
  auto* White=Cast<UMaterialExpressionConstant3Vector>(UMaterialEditingLibrary::CreateMaterialExpression(Air,UMaterialExpressionConstant3Vector::StaticClass())); White->Constant=FLinearColor(.75f,1.05f,1.3f);
  UMaterialEditingLibrary::ConnectMaterialProperty(White,TEXT(""),MP_EmissiveColor);
  auto* Opacity=Cast<UMaterialExpressionCustom>(UMaterialEditingLibrary::CreateMaterialExpression(Air,UMaterialExpressionCustom::StaticClass())); Opacity->OutputType=CMOT_Float1;
@@ -103,7 +118,8 @@ bool CitixCreateRoadsideAssets()
  Opacity->Code=TEXT("float edge=pow(saturate(1-abs(UV.y*2-1)),3); float pulse=.3+.7*pow(saturate(sin(Time*18-Phase*1.8)),3); return edge*pulse*Strength*.65;");
  UMaterialEditingLibrary::ConnectMaterialProperty(Opacity,TEXT(""),MP_Opacity); UMaterialEditingLibrary::RecompileMaterial(Air);
  const bool Saved=Save(Air,AirPath);
- UE_LOG(LogCitix,Log,TEXT("[CitixRoadside] bush triangles=%d, pointed leaves=264; assets saved=%d"),Triangles,Saved);
+ UE_LOG(LogCitix,Log,TEXT("[CitixRoadside] bush triangles=%d, faceted lobes=9; assets saved=%d"),Triangles,Saved);
  return Saved;
 }
 #endif
+

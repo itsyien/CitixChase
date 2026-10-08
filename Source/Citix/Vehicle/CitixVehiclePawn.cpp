@@ -408,6 +408,7 @@ void ACitixVehiclePawn::SetBodyColor(FLinearColor Color)
 void ACitixVehiclePawn::ApplyChasePerformance(bool bRunner)
 {
 	bChaseRunner = bRunner;
+	bChasePerformanceApplied = true;
 	const FCitixCarPerformance Base = FCitixCarLibrary::GetPerformance(ECitixCarType::Sedan);
  VehicleMassKg = Base.MassKg;
  if (BodyCollision) { BodyCollision->SetMassOverrideInKg(NAME_None, VehicleMassKg, true); BodyCollision->SetLinearDamping(.01f); }
