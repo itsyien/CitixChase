@@ -1,0 +1,14 @@
+{
+  "ShippingExecutable": "E:\\UnrealProjects\\CitixChase\\PackageShipping\\Windows\\Citix\\Binaries\\Win64\\Citix-Win64-Shipping.exe",
+  "SHA256": "8FB2A656A267549FB1735906CC36A9E64914070997093CECDF8AC7DCC531CF97",
+  "BuiltAt": "2026-10-04T12:21:35.9976393-06:00",
+  "ReentryReceipt": {
+    "passed": true,
+    "speed_kmh": 121.18,
+    "throttle": 1.0
+  },
+  "OriginalVerification": {
+    "OriginalFilesChecked": 142,
+    "Changed": 0
+  }
+}

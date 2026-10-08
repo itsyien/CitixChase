@@ -1,0 +1,11 @@
+Qwantani Night (Pure Sky)
+Source: https://polyhaven.com/a/qwantani_night_puresky
+Asset file: qwantani_night_puresky_4k.exr
+Authors: Greg Zaal (photography), Jarod Guest (processing / pure-sky edit)
+License: CC0 1.0 Universal (public domain dedication)
+License URL: https://creativecommons.org/publicdomain/zero/1.0/
+Downloaded from: https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/4k/qwantani_night_puresky_4k.exr
+MD5: 9da2376b018f1dae672689def15dfb4f
+
+The EXR is used only after dusk as the visible night sky for Citix. It is kept
+linear and unclipped; Unreal performs display exposure/tinting in M_CitixSky.
