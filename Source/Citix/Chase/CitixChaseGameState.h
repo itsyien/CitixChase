@@ -20,6 +20,8 @@ public:
  UPROPERTY(Replicated) TArray<float> BreakawayWidths;
  UPROPERTY(Replicated) TArray<float> BreakawayYaws;
 	UFUNCTION(NetMulticast, Unreliable) void MulticastPistolShot(FVector_NetQuantize From, FVector_NetQuantize To, bool bRunnerHit, APlayerState* Shooter);
+ UFUNCTION(NetMulticast, Reliable) void MulticastRelaySprinkles(FVector_NetQuantize Location,FVector_NetQuantize Velocity);
+ UFUNCTION(NetMulticast, Unreliable) void MulticastRapidBrake(FVector_NetQuantize Location,FVector_NetQuantize Velocity);
  static void PlayShotFeedback(UWorld* World, const FVector& Muzzle, bool Dry);
 	UFUNCTION(NetMulticast, Reliable) void MulticastPixelExplosion(FVector_NetQuantize Location);
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
@@ -27,6 +29,8 @@ public:
 	UPROPERTY(Replicated, BlueprintReadOnly) int32 RoundNumber = 0;
 	UPROPERTY(Replicated, BlueprintReadOnly) int32 CitySeed = 0;
 	UPROPERTY(Replicated, BlueprintReadOnly) int32 CityConfigHash = 0;
+	UPROPERTY(Replicated, BlueprintReadOnly) bool bHillsideMap = false;
+	UPROPERTY(Replicated, BlueprintReadOnly) int32 MapRevision = 0;
 	UPROPERTY(Replicated, BlueprintReadOnly) TArray<FVector> LayoutRelayLocations;
 	UPROPERTY(Replicated, BlueprintReadOnly) TArray<FVector> LayoutExitLocations;
 	UPROPERTY(Replicated, BlueprintReadOnly) TArray<FVector> LayoutSpawnLocations;

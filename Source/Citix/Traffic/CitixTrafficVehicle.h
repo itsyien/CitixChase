@@ -19,6 +19,8 @@ USTRUCT() struct FCitixTrafficSnapshot {
  UPROPERTY() float Timestamp = 0.f;
  UPROPERTY() float SpeedKmh = 0.f;
  UPROPERTY() int32 Generation = 0;
+ // Pose, lifecycle and visibility must arrive as one replicated snapshot.
+ UPROPERTY() bool bVisible = false;
 };
 
 UCLASS(NotBlueprintable)
@@ -76,7 +78,6 @@ protected:
 	UPROPERTY(ReplicatedUsing=OnRep_Appearance)
 	int32 BuildSeed = 0;
 
-	UPROPERTY(ReplicatedUsing=OnRep_Visible)
 	bool bVisibleNet = false;
 	bool bTakenByPlayer = false;
 	FCitixCarVisual CarVisual;

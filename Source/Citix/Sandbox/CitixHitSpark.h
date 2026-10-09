@@ -25,6 +25,8 @@ public:
 
 	/** Launch one spark. Reuses this actor if it is idle. */
 	void Fire(const FVector& From, const FVector& Velocity, ECitixSurface Surface);
+	static void SpawnRapidBrake(UWorld* World,const FVector& Location,const FVector& Velocity);
+	static void SpawnRelaySprinkles(UWorld* World,const FVector& Location,const FVector& Velocity);
 	static void SpawnPursuitPulse(UWorld* World,const FVector& Location,const FVector& Velocity,bool Energy);
 	static void SpawnPixelBurst(UWorld* World, const FVector& Location, bool bExplosion, bool bRedImpact = false);
 

@@ -132,7 +132,13 @@ UStaticMesh* FCitixSurfaceLibrary::GetMesh(ECitixSurface Surface)
 	switch (Surface)
 	{
 	case ECitixSurface::Bush:
-		if (!MeshCache.Contains(Surface)) MeshCache.Add(Surface,LoadMesh(TEXT("/Game/Citix/Meshes/SM_CitixBush.SM_CitixBush")));
+		if (!MeshCache.Contains(Surface)) {
+			UStaticMesh* BushMesh=LoadMesh(TEXT("/Game/Citix/Meshes/SM_CitixBush.SM_CitixBush"));
+			// This process-wide cache is not a reflected UObject property. Hosting
+			// collects the old city, so retain the asset before caching its pointer.
+			if (BushMesh) { BushMesh->AddToRoot(); MeshCache.Add(Surface,BushMesh); }
+			else return nullptr;
+		}
 		return MeshCache[Surface];
 	case ECitixSurface::Trunk:
 	case ECitixSurface::Pole:

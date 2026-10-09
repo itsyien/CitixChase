@@ -125,6 +125,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Citix|Generation")
 	bool bAutoGenerateOnBeginPlay = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Citix|Generation")
+	bool bHillsideMap = false;
+
 	/** Overrides UCitixCitySettings::Seed when >= 0. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Citix|Generation", meta = (ClampMin = "-1"))
 	int32 SeedOverride = -1;
@@ -199,6 +202,9 @@ protected:
 
 	UPROPERTY()
 	TObjectPtr<ACitixCityPreview> Preview;
+
+	UPROPERTY()
+	TObjectPtr<class ACitixHillsideBuilder> HillsideBuilder;
 
 	UPROPERTY()
 	TObjectPtr<ACitixTrafficSystem> TrafficSystem;

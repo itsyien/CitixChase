@@ -2,6 +2,10 @@
 #include "Engine/Engine.h"
 #include "Misc/App.h"
 #include "HAL/IConsoleManager.h"
+#include "City/CitixCityChunk.h"
+#include "UObject/UObjectIterator.h"
+#include "AudioDevice.h"
+#include "Engine/World.h"
 
 UCitixGraphicsSettings* UCitixGraphicsSettings::Get()
 {
@@ -68,6 +72,25 @@ void UCitixGraphicsSettings::SetFPSDetent(int32 Detent)
  SetFrameRateLimit(FPSForDetent(Detent));
  SetFrameRateLimitCVar(GetFrameRateLimit());
 }
+float UCitixGraphicsSettings::GetMasterVolumePercent() const
+{
+ return FMath::IsFinite(MasterVolumePercent) ? FMath::Clamp(FMath::RoundToFloat(MasterVolumePercent),0.f,100.f) : 100.f;
+}
+void UCitixGraphicsSettings::SetMasterVolumePercent(float Percentage,const UObject* WorldContext)
+{
+ MasterVolumePercent=Percentage;
+ MasterVolumePercent=GetMasterVolumePercent();
+ ApplyAudioSettings(WorldContext);
+}
+void UCitixGraphicsSettings::ApplyAudioSettings(const UObject* WorldContext) const
+{
+ // The device primary gain covers every source, including sounds already playing
+ // and future spawns, without rewriting their individual volume or sound class.
+ // Resolve this world's device so a client never changes a different PIE device.
+ const UWorld* World=WorldContext ? WorldContext->GetWorld() : nullptr;
+ if(World) if(FAudioDevice* Device=World->GetAudioDeviceRaw())
+  Device->SetTransientPrimaryVolume(GetMasterVolumePercent()/100.f);
+}
 void UCitixGraphicsSettings::ApplyNonResolutionSettings()
 {
  ScalabilityQuality.ResolutionQuality=EffectiveResolutionScale();
@@ -76,6 +99,8 @@ void UCitixGraphicsSettings::ApplyNonResolutionSettings()
  // Scalability clamps its resolution CVar. Apply after it with game-setting
  // priority so preset changes and normal engine settings application retain 110%.
  ApplySceneScale();
+ if(auto* C=IConsoleManager::Get().FindConsoleVariable(TEXT("foliage.MinimumScreenSize"))) C->Set(0.f,ECVF_SetByGameSetting);
+ for(TObjectIterator<ACitixCityChunk> It;It;++It) if(!It->IsTemplate() && It->GetWorld()) It->RefreshDetailDrawDistance(EffectivePreset());
 }
 void UCitixGraphicsSettings::ApplySceneScale()
 {

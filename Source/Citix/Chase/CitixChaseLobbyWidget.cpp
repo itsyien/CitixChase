@@ -25,6 +25,7 @@
 #include "Framework/Application/SlateApplication.h"
 #include "TimerManager.h"
 #include "Citix.h"
+#include "Engine/NetDriver.h"
 
 namespace {
  const FLinearColor Blue(.12f,.72f,1), Dim(.61f,.71f,.82f), Dark(.012f,.023f,.045f,.97f);
@@ -72,7 +73,7 @@ TSharedRef<SWidget> UCitixChaseLobbyWidget::RebuildWidget()
  auto* Card=WidgetTree->ConstructWidget<UBorder>(); Card->SetBrushColor(Dark); Card->SetPadding(FMargin(30,26)); Size->AddChild(Card);
  auto* Scroll=WidgetTree->ConstructWidget<UScrollBox>(); MainScroll=Scroll; Scroll->SetScrollBarVisibility(ESlateVisibility::Collapsed); Card->AddChild(Scroll);
  auto* Panel=WidgetTree->ConstructWidget<UVerticalBox>(); Scroll->AddChild(Panel);
- Label(WidgetTree,Panel,TEXT("URBAN PURSUIT  /  TWO DRIVERS  /  v1.0"),12,Blue);
+ Label(WidgetTree,Panel,TEXT("URBAN PURSUIT  /  TWO DRIVERS  /  v1.2"),12,Blue);
  Label(WidgetTree,Panel,TEXT("CITIXCHASE"),44,FLinearColor::White);
  Label(WidgetTree,Panel,TEXT("Outrun. Break away. Escape."),17,Dim);
  BrowserPanel=WidgetTree->ConstructWidget<UVerticalBox>(); Panel->AddChildToVerticalBox(BrowserPanel)->SetPadding(FMargin(0,12,0,0));
@@ -93,6 +94,15 @@ TSharedRef<SWidget> UCitixChaseLobbyWidget::RebuildWidget()
  DriverOne=Text(WidgetTree,TEXT("01 / DRIVER"),15,Blue); DriverTwo=Text(WidgetTree,TEXT("02 / OPEN SLOT"),15,Dim);
  Drivers->AddChildToHorizontalBox(DriverOne)->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); Drivers->AddChildToHorizontalBox(DriverTwo)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
  UTextBlock* Ready=nullptr; EnterLobbyButton=Button(WidgetTree,TEXT("READY"),&Ready,true); ReadyLabel=Ready;
+ MapLabel=Label(WidgetTree,ConnectedPanel,TEXT("MAP / CITY — HOST CHOOSES"),12,Blue);
+ auto* Maps=WidgetTree->ConstructWidget<UHorizontalBox>();
+ ConnectedPanel->AddChildToVerticalBox(Maps)->SetPadding(FMargin(0,8));
+ CityMapButton=Button(WidgetTree,TEXT("CITY\nUrban grid / open streets"));
+ HillsideMapButton=Button(WidgetTree,TEXT("HILLSIDE SWITCHBACK\nCoast / terraces / summit"));
+ Maps->AddChildToHorizontalBox(CityMapButton)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+ auto* HillSlot=Maps->AddChildToHorizontalBox(HillsideMapButton); HillSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); HillSlot->SetPadding(FMargin(8,0,0,0));
+ CityMapButton->OnClicked.AddDynamic(this,&UCitixChaseLobbyWidget::CityMapClicked);
+ HillsideMapButton->OnClicked.AddDynamic(this,&UCitixChaseLobbyWidget::HillsideMapClicked);
  ConnectedPanel->AddChildToVerticalBox(EnterLobbyButton)->SetPadding(FMargin(0,8)); EnterLobbyButton->OnClicked.AddDynamic(this,&UCitixChaseLobbyWidget::EnterLobbyClicked);
  Label(WidgetTree,ConnectedPanel,TEXT("Both drivers ready up to start. Your roles switch next round."),14,Dim);
  LeaveButton=Button(WidgetTree,TEXT("LEAVE ROOM")); ConnectedPanel->AddChildToVerticalBox(LeaveButton)->SetPadding(FMargin(0,0,0,8)); LeaveButton->OnClicked.AddDynamic(this,&UCitixChaseLobbyWidget::LeaveClicked);
@@ -128,6 +138,11 @@ void UCitixChaseLobbyWidget::NativeTick(const FGeometry& G,float Dt)
  if(!M || !S || !HostButton)return;
  if(SeenRevision!=M->ResultsRevision)RefreshRooms();
  const bool Busy=M->IsBusy(), Connected=M->IsInRoom();
+ const bool MapHost=GetOwningPlayer()->HasAuthority() && GetOwningPlayer()->IsLocalController();
+ const bool ChooseMap=Connected && MapHost && !Busy && (S->Phase==ECitixChasePhase::Waiting || S->Phase==ECitixChasePhase::MatchResults);
+ CityMapButton->SetIsEnabled(ChooseMap && S->bHillsideMap);
+ HillsideMapButton->SetIsEnabled(ChooseMap && !S->bHillsideMap);
+ MapLabel->SetText(FText::FromString(FString::Printf(TEXT("MAP / %s — %s"),S->bHillsideMap ? TEXT("HILLSIDE SWITCHBACK") : TEXT("CITY"),MapHost ? TEXT("YOU CHOOSE") : TEXT("HOST CHOOSES"))));
  AdvancedToggle->SetVisibility(Connected ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
  AdvancedPanel->SetVisibility(!Connected && bAdvanced ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
  MainScroll->SetScrollBarVisibility(!Connected && bAdvanced ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
@@ -159,9 +174,14 @@ void UCitixChaseLobbyWidget::AdvancedClicked() { bAdvanced=!bAdvanced; AdvancedP
 void UCitixChaseLobbyWidget::RetryClicked(){ if(auto* M=Manager())M->Retry(); }
 void UCitixChaseLobbyWidget::CancelClicked(){ if(auto* M=Manager())M->Cancel(); }
 void UCitixChaseLobbyWidget::LeaveClicked(){ if(auto* M=Manager())M->LeaveRoom(); }
+void UCitixChaseLobbyWidget::CityMapClicked(){if(auto* PC=Cast<ACitixDrivingPlayerController>(GetOwningPlayer()))PC->ServerSelectLobbyMap(false);}
+void UCitixChaseLobbyWidget::HillsideMapClicked(){if(auto* PC=Cast<ACitixDrivingPlayerController>(GetOwningPlayer()))PC->ServerSelectLobbyMap(true);}
 void UCitixChaseLobbyWidget::TickUIProbe()
 {
  const float Now=GetWorld()->GetTimeSeconds(); auto* M=Manager(); if(!M)return;
+ if(FParse::Param(FCommandLine::Get(),TEXT("CitixHostTravelProbe")) && bProbeConnectedShot && !M->IsInRoom() && !M->IsBusy() && M->State!=ECitixConnectionState::Error) {
+  bTestClicked=false; bProbeConnectedShot=false; NextTestClick=0;
+ }
  FString Tag=TEXT("Host"); FParse::Value(FCommandLine::Get(),TEXT("CitixNetTag="),Tag);
  auto Shot=[&](const TCHAR* Name){ FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("Screenshots")/(FString(Name)+TEXT("-")+Tag+TEXT(".png")),true,false); };
  if(!bTestScreenshot && Now>3 && FParse::Param(FCommandLine::Get(),TEXT("CitixLobbyScreenshot"))){bTestScreenshot=true; if(FParse::Param(FCommandLine::Get(),TEXT("CitixAdvancedScreenshot")))AdvancedClicked(); Shot(TEXT("OnlineLobby"));}
@@ -169,6 +189,19 @@ void UCitixChaseLobbyWidget::TickUIProbe()
  if(!FParse::Param(FCommandLine::Get(),TEXT("CitixLobbyButtons")) || Now<NextTestClick)return;
  NextTestClick=Now+2;
  if(M->IsInRoom()) {
+  // Opt-in packaged regression proof uses the real lobby buttons and map travel.
+  if(FParse::Param(FCommandLine::Get(),TEXT("CitixHostTravelProbe")) && !bProbeConnectedShot && Now>3) {
+   auto* S=GetWorld()->GetGameState<ACitixChaseGameState>();
+   auto* PC=GetOwningPlayer(); auto* Player=PC ? PC->GetPlayerState<ACitixChasePlayerState>() : nullptr;
+   if(S && Player && Player->bCityIdentityValid && GetWorld()->GetNetMode()==NM_ListenServer) {
+    static int32 Cycles=0; ++Cycles; bProbeConnectedShot=true;
+    const FString Receipt=FString::Printf(TEXT("{\"connected\":true,\"listen_server\":true,\"online\":%s,\"city_verified\":true,\"players\":%d,\"cycles\":%d,\"net_driver\":\"%s\"}"),M->IsOnline()?TEXT("true"):TEXT("false"),S->PlayerArray.Num(),Cycles,GetWorld()->GetNetDriver() ? *GetWorld()->GetNetDriver()->GetClass()->GetName() : TEXT("None"));
+    FFileHelper::SaveStringToFile(Receipt,*(FPaths::ProjectSavedDir()/(TEXT("HostTravel-")+Tag+TEXT(".json"))));
+    UE_LOG(LogCitix,Log,TEXT("[CitixHostTravelProbe] %s"),*Receipt); Shot(TEXT("HostedRoom"));
+    int32 RequestedCycles=1; FParse::Value(FCommandLine::Get(),TEXT("CitixHostTravelCycles="),RequestedCycles);
+    if(Cycles<RequestedCycles) {M->LeaveRoom(); return;}
+   }
+  }
   if(FParse::Param(FCommandLine::Get(),TEXT("CitixLANProbe")) && !bProbeConnectedShot) { bProbeConnectedShot=true; Shot(TEXT("LANRoom")); const FString Receipt=FString::Printf(TEXT("{\"connected\":true,\"room\":\"%s\",\"players\":%d}"),*M->RoomName.Replace(TEXT("\""),TEXT("")),GetWorld()->GetGameState<ACitixChaseGameState>()->PlayerArray.Num()); FFileHelper::SaveStringToFile(Receipt,*(FPaths::ProjectSavedDir()/(TEXT("LANConnected-")+Tag+TEXT(".json")))); }
   ClickByKeyboard(EnterLobbyButton,GetWorld()); return;
  }

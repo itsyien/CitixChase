@@ -36,6 +36,11 @@ private:
  UFUNCTION() void RetryClicked();
  UFUNCTION() void CancelClicked();
  UFUNCTION() void LeaveClicked();
+ UFUNCTION() void CityMapClicked();
+ UFUNCTION() void HillsideMapClicked();
+ UPROPERTY() TObjectPtr<UButton> CityMapButton;
+ UPROPERTY() TObjectPtr<UButton> HillsideMapButton;
+ UPROPERTY() TObjectPtr<UTextBlock> MapLabel;
  void RefreshRooms();
  void TickUIProbe();
  UCitixSessionSubsystem* Manager() const;

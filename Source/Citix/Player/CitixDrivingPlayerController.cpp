@@ -1,4 +1,6 @@
 #include "Player/CitixDrivingPlayerController.h"
+#include "Chase/CitixEffectsVisualProbe.h"
+#include "City/CitixHillsideVisualProbe.h"
 #include "Network/CitixSessionSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Chase/CitixIceWave.h"
@@ -43,6 +45,7 @@
 #include "Sandbox/CitixPoliceVehicle.h"
 #include "Sandbox/CitixPoliceOfficer.h"
 #include "City/CitixCityGenerator.h"
+#include "City/CitixHillsideLayout.h"
 #include "City/CitixRoadNetwork.h"
 #include "Core/CitixCitySettings.h"
 #include "World/CitixTimeOfDay.h"
@@ -175,7 +178,7 @@ ACitixDrivingPlayerController::ACitixDrivingPlayerController()
 void ACitixDrivingPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
- if (IsLocalController()) if(auto* Settings=UCitixGraphicsSettings::Get()) Settings->InitializeForPC();
+ if (IsLocalController()) if(auto* Settings=UCitixGraphicsSettings::Get()) { Settings->InitializeForPC(); Settings->ApplyAudioSettings(GetWorld()); }
 
 	SetInputMode(FInputModeGameOnly());
 	bShowMouseCursor = false;
@@ -441,6 +444,8 @@ void ACitixDrivingPlayerController::SetupInputComponent()
 
 void ACitixDrivingPlayerController::Tick(float DeltaSeconds)
 {
+ CitixEffectsVisualProbeTick(this);
+ CitixHillsideVisualProbeTick(this);
 	Super::Tick(DeltaSeconds);
  if (IsLocalController() && FParse::Param(FCommandLine::Get(),TEXT("CitixGraphicsProbe"))) {
   int32& Step=GraphicsProbeStep; float& Wait=GraphicsProbeWait; bool& Passed=bGraphicsProbePassed;
@@ -486,8 +491,50 @@ void ACitixDrivingPlayerController::Tick(float DeltaSeconds)
    if (Eligible) { SmokeProbeWait+=DeltaSeconds; if (SmokeProbeWait>1.f) { InputKey(FInputKeyEventArgs::CreateSimulated(EKeys::LeftMouseButton,IE_Pressed,1.f)); ++SmokeProbeStep; SmokeProbeWait=0; } }
   }
  }
+
+
+ if(IsLocalController() && FParse::Param(FCommandLine::Get(),TEXT("CitixSmokeTrackingProbe"))) {
+  static int32 Changes=0;static bool WasVisible=true;static float Since=0;static bool HiddenShot=false,VisibleShot=false,Written=false;
+  const auto* S=GetWorld()->GetGameState<ACitixChaseGameState>();
+  if(S && S->Phase==ECitixChasePhase::Pursuit){Since+=DeltaSeconds;
+   if(S->bRunnerRevealed!=WasVisible){++Changes;WasVisible=S->bRunnerRevealed;Since=0;}
+   if(Since>.6f && ((!WasVisible && !HiddenShot) || (WasVisible && HiddenShot && !VisibleShot))){
+    FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("Screenshots")/(FString(TEXT("SmokeTracking-"))+NetTag+(WasVisible ? TEXT("-visible.png") : TEXT("-hidden.png"))),true,false);
+    if(WasVisible)VisibleShot=true;else HiddenShot=true;
+   }
+   if(Changes>=4 && !Written){FFileHelper::SaveStringToFile(TEXT("{\"passed\":true,\"replicated_transitions\":4}"),*(FPaths::ProjectSavedDir()/(TEXT("SmokeTrackingClient-")+NetTag+TEXT(".json"))));Written=true;}
+  }
+ }
+ if(IsLocalController() && FParse::Param(FCommandLine::Get(),TEXT("CitixCommitmentProbe"))) {
+  static bool RelaySeen=false,EscapeSeen=false,Written=false,Shot=false;
+  const auto* S=GetWorld()->GetGameState<ACitixChaseGameState>();
+  if(S) {
+   for(const APlayerState* State:S->PlayerArray) if(const auto* PS=Cast<ACitixChasePlayerState>(State); PS && PS->ChaseRole==ECitixChaseRole::Runner && PS->bInteractionActive) {
+    RelaySeen|=PS->InteractionType==ECitixChaseInteraction::Relay;
+    EscapeSeen|=PS->InteractionType==ECitixChaseInteraction::Escape;
+    if(PS->InteractionType==ECitixChaseInteraction::Escape && PS->InteractionSecondsRemaining<=3.3f && !Shot){FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("Screenshots")/(TEXT("EscapeCommitment-")+NetTag+TEXT(".png")),true,false);Shot=true;}
+   }
+   if(!Written && S->Phase==ECitixChasePhase::RoundResults) {
+    const bool Passed=RelaySeen && EscapeSeen && S->CompletedRelays==6;
+    FFileHelper::SaveStringToFile(Passed ? TEXT("{\"passed\":true,\"replicated_relay_progress\":true,\"replicated_escape_countdown\":true,\"six_relays\":true}") : TEXT("{\"passed\":false}"),*(FPaths::ProjectSavedDir()/(TEXT("CommitmentClient-")+NetTag+TEXT(".json")))); Written=true;
+   }
+  }
+ }
+ if(IsLocalController() && FParse::Param(FCommandLine::Get(),TEXT("CitixBalanceProbe"))) {
+  static float Wait=0; static bool Pressed=false,Reported=false;
+  const auto* S=GetWorld()->GetGameState<ACitixChaseGameState>(); const auto* PS=GetPlayerState<ACitixChasePlayerState>();
+  if(S && PS && S->Phase==ECitixChasePhase::Pursuit) {
+   Wait+=DeltaSeconds;
+   if(!Pressed && Wait>1.5f && PS->ChaseRole==ECitixChaseRole::Chaser) {InputKey(FInputKeyEventArgs::CreateSimulated(EKeys::RightMouseButton,IE_Pressed,1.f)); Pressed=true;}
+   if(!Reported && Wait>35.5f) {
+    const bool Passed=S->bRunnerRevealed && S->LayoutRelayLocations.Num()==6 && (PS->ChaseRole!=ECitixChaseRole::Chaser || (Pressed && PS->RapidBrakeCharges==1));
+    FFileHelper::SaveStringToFile(Passed ? TEXT("{\"passed\":true,\"replicated_relay_count\":6,\"continuous_reveal\":true,\"brake_refilled\":true}") : TEXT("{\"passed\":false}"),*(FPaths::ProjectSavedDir()/(TEXT("BalanceClient-")+NetTag+TEXT(".json")))); Reported=true;
+   }
+  }
+ }
  if (FParse::Param(FCommandLine::Get(),TEXT("CitixIceScreenshot"))) CitixIceVisualProbeTick(this);
  if (FParse::Param(FCommandLine::Get(),TEXT("CitixRoadsideVisualProbe"))) CitixRoadsideVisualProbeTick(this);
+ if (FParse::Param(FCommandLine::Get(),TEXT("CitixTrackerVisualProbe"))) CitixTrackerVisualProbeTick(this);
  if (IsLocalController() && FParse::Param(FCommandLine::Get(),TEXT("CitixSmokeScreenshot"))) {
   static bool BriefShot=false;
   const auto* BriefState=GetWorld()->GetGameState<ACitixChaseGameState>();
@@ -560,12 +607,13 @@ void ACitixDrivingPlayerController::Tick(float DeltaSeconds)
 			CitySeedCheckTimer = 0.f;
 			if (const ACitixChaseGameState* ChaseSeed = GetWorld()->GetGameState<ACitixChaseGameState>())
 			{
+				EnsureLocalWorld();
 				ACitixCityGenerator* LocalGen = nullptr;
 				for (TActorIterator<ACitixCityGenerator> It(GetWorld()); It; ++It) { LocalGen = *It; break; }
 				if (LocalGen && LocalGen->IsGenerated() && ChaseSeed->CitySeed != 0)
 				{
 					const FCitixRoadNetwork& Roads = LocalGen->GetRoadNetwork();
-					const int32 LocalHash = static_cast<int32>(HashCombine(GetTypeHash(Roads.CitySize), HashCombine(GetTypeHash(Roads.Nodes.Num()), GetTypeHash(Roads.Edges.Num()))));
+					const int32 LocalHash = static_cast<int32>(Roads.GetLayoutHash(LocalGen->bHillsideMap ? FCitixHillsideLayout::Revision : 0));
 					if (LocalGen->GetResolvedSeed() != ChaseSeed->CitySeed || LocalHash != ChaseSeed->CityConfigHash)
 					{
 						bCitySeedMismatch = true;
@@ -704,7 +752,11 @@ bool ACitixDrivingPlayerController::InputKey(const FInputKeyEventArgs& Params)
  if (IsSettingsMenuOpen()) return true;
 	if (Params.Event == IE_Pressed)
 	{
-		if (IsChaseMode() && Params.Key==EKeys::LeftMouseButton) {
+		if(IsChaseMode() && Params.Key==EKeys::RightMouseButton && !IsOnFoot()) {
+   const auto* PS=GetPlayerState<ACitixChasePlayerState>();
+   if(PS && PS->ChaseRole==ECitixChaseRole::Chaser) {ServerChaserRapidBrake(); return true;}
+  }
+  if (IsChaseMode() && Params.Key==EKeys::LeftMouseButton) {
    const auto* PS=GetPlayerState<ACitixChasePlayerState>();
    if (PS && PS->ChaseRole==ECitixChaseRole::Runner) ServerRunnerSmoke();
    else if (IsOnFoot()) SendFireShot();
@@ -842,6 +894,8 @@ void ACitixDrivingPlayerController::EnsureLocalWorld()
 		return;
 	}
 	const bool bChaseMode = World->GetGameState<ACitixChaseGameState>() != nullptr;
+	const auto* ChaseWorld=World->GetGameState<ACitixChaseGameState>();
+	if(bChaseMode && ChaseWorld->CitySeed==0) return;
 
 	ACitixCityGenerator* Generator = nullptr;
 	for (TActorIterator<ACitixCityGenerator> It(World); It; ++It)
@@ -851,14 +905,18 @@ void ACitixDrivingPlayerController::EnsureLocalWorld()
 	}
 	if (!Generator)
 	{
-		FActorSpawnParameters Params;
-		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		Generator = World->SpawnActor<ACitixCityGenerator>(
-			ACitixCityGenerator::StaticClass(), FTransform::Identity, Params);
+		Generator = World->SpawnActorDeferred<ACitixCityGenerator>(ACitixCityGenerator::StaticClass(),FTransform::Identity,nullptr,nullptr,ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+		if(Generator) {Generator->bAutoGenerateOnBeginPlay=false; Generator->FinishSpawning(FTransform::Identity);}
 	}
 	if (bChaseMode && Generator)
 	{
 		Generator->bSpawnPedestrians = false;
+		if(Generator->IsGenerated() && (Generator->GetResolvedSeed()!=ChaseWorld->CitySeed || Generator->bHillsideMap!=ChaseWorld->bHillsideMap))
+		{
+			Generator->ClearCity(); bReportedChaseCityIdentity=false; bCitySeedMismatch=false;
+		}
+		Generator->SeedOverride=ChaseWorld->CitySeed;
+		Generator->bHillsideMap=ChaseWorld->bHillsideMap;
 	}
 	if (Generator && !Generator->IsGenerated())
 	{
@@ -1625,8 +1683,15 @@ void ACitixDrivingPlayerController::ServerReportChaseCityIdentity_Implementation
 		if (const ACitixChaseGameState* State = GetWorld() ? GetWorld()->GetGameState<ACitixChaseGameState>() : nullptr)
 		{
 			PS->bCityIdentityValid = Seed == State->CitySeed && LayoutHash == State->CityConfigHash;
+			UE_LOG(LogCitix,Log,TEXT("[CitixChase] City identity acknowledged: player=%s seed=%d hash=%d valid=%d"),*PS->GetPlayerName(),Seed,LayoutHash,PS->bCityIdentityValid);
 		}
 	}
+}
+
+void ACitixDrivingPlayerController::ServerSelectLobbyMap_Implementation(bool Hillside)
+{
+ if(auto* Mode=GetWorld() ? GetWorld()->GetAuthGameMode<ACitixChaseGameMode>() : nullptr)
+  if(!Mode->SelectLobbyMap(this,Hillside)) UE_LOG(LogCitix,Log,TEXT("[CitixChase] Map selection rejected: player=%s local-host=%d"),*GetName(),IsLocalController());
 }
 
 void ACitixDrivingPlayerController::HandleCancel(const FInputActionValue& Value)
@@ -2176,8 +2241,9 @@ bool ACitixDrivingPlayerController::RequestEnterVehicle()
    if (!Chase->CanClaimReplacement(this,Owned)) return false;
    Owned->SetOccupied(true); Possess(Owned);
    if (GetPawn()!=Owned) { Owned->SetOccupied(false); return false; }
-   if (!Own) { ChasePlayer->bReplacementUsed=true; Owned->GetVehicleMovement()->RepairFull(); }
-   Owned->SetOwningController(this); Owned->ApplyChasePerformance(ChasePlayer->ChaseRole==ECitixChaseRole::Runner);
+   Owned->ApplyChasePerformance(ChasePlayer->ChaseRole==ECitixChaseRole::Runner);
+   Chase->ClaimReplacement(this,Owned);
+   Owned->SetOwningController(this);
   } else if (ACitixTrafficVehicle* Traffic=Cast<ACitixTrafficVehicle>(Candidate)) {
    ACitixTrafficSystem* System=nullptr; for (TActorIterator<ACitixTrafficSystem> It(GetWorld()); It; ++It) { System=*It; break; }
    if (!System || Traffic->IsTakenByPlayer() || Traffic->GetAuthoritativeSpeedKmh()>=10.f) return false;
@@ -2186,8 +2252,8 @@ bool ACitixDrivingPlayerController::RequestEnterVehicle()
    if (!Car) return false;
    Car->SetCarAppearance(Traffic->GetCarType(),Traffic->GetPaintColor()); Car->SetOccupied(true); Possess(Car);
    if (GetPawn()!=Car || !System->TakeVehicle(Traffic)) { Possess(OnFootCharacter); Car->Destroy(); return false; }
-   Car->SetOwningController(this); Car->ApplyChasePerformance(true); Car->GetVehicleMovement()->RepairFull();
-   ChasePlayer->bReplacementUsed=true;
+   Car->ApplyChasePerformance(ChasePlayer->ChaseRole==ECitixChaseRole::Runner);
+   Chase->ClaimReplacement(this,Car); Car->SetOwningController(this);
   } else return false;
   OnFootPawn=nullptr; OnFootCharacter->Destroy();
   UE_LOG(LogCitix,Log,TEXT("[CitixChase] Road car claimed; reserve used=%d, hits=%d."),ChasePlayer->bReplacementUsed,ChasePlayer->PistolHits);
@@ -2319,4 +2385,9 @@ void ACitixDrivingPlayerController::ServerChaserIce_Implementation()
 void ACitixDrivingPlayerController::ServerRunnerSmoke_Implementation()
 {
  if (auto* Mode=GetWorld()->GetAuthGameMode<ACitixChaseGameMode>()) Mode->UseRunnerSmoke(this);
+}
+
+void ACitixDrivingPlayerController::ServerChaserRapidBrake_Implementation()
+{
+ if(auto* Mode=GetWorld()->GetAuthGameMode<ACitixChaseGameMode>()) Mode->UseChaserRapidBrake(this);
 }

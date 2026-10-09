@@ -50,7 +50,7 @@ bool FCitixIceSpaceTest::RunTest(const FString& Parameters)
  Wave->GetComponents(Stamps);
  TestTrue(TEXT("World frost has a bounded decal budget"),Stamps.Num()<=24);
  // UWorld clamps unusually large frame deltas; advance real-sized frames.
- for (int32 Frame=0;Frame<30;++Frame) { World->Tick(LEVELTICK_All,.1f); Wave->Tick(.1f); }
+ for (int32 Frame=0;Frame<55;++Frame) { World->Tick(LEVELTICK_All,.1f); Wave->Tick(.1f); }
  if (FrostMID) TestEqual(TEXT("World-space frost thaws completely"),FrostMID->K2_GetScalarParameterValue(TEXT("Fade")),0.f);
  GI->Shutdown(); GEngine->DestroyWorldContext(World); World->DestroyWorld(false);
  return true;
@@ -71,22 +71,22 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCitixIceRulesTest, "CitixChase.IceWave.Targeti
 bool FCitixIceRulesTest::RunTest(const FString& Parameters)
 {
  const FVector Origin(150,200,50), Forward(1,0,0);
- TestTrue(TEXT("Runner at forty metres is hit"),FCitixChaseRules::InIceCone(Origin,Forward,Origin+FVector(4000,0,0)));
- TestFalse(TEXT("Runner beyond forty metres is safe"),FCitixChaseRules::InIceCone(Origin,Forward,Origin+FVector(4001,0,0)));
+ TestTrue(TEXT("Runner at fifty-six metres is hit"),FCitixChaseRules::InIceCone(Origin,Forward,Origin+FVector(5600,0,0)));
+ TestFalse(TEXT("Runner beyond fifty-six metres is safe"),FCitixChaseRules::InIceCone(Origin,Forward,Origin+FVector(5601,0,0)));
  TestFalse(TEXT("Runner behind chaser is safe"),FCitixChaseRules::InIceCone(Origin,Forward,Origin+FVector(-500,0,0)));
  TestTrue(TEXT("Wide cone includes sixty degree edge"),FCitixChaseRules::InIceCone(Origin,Forward,Origin+FRotator(0,60,0).Vector()*2000));
  TestFalse(TEXT("Runner outside cone is safe"),FCitixChaseRules::InIceCone(Origin,Forward,Origin+FRotator(0,61,0).Vector()*2000));
  TestFalse(TEXT("Different elevated road is safe"),FCitixChaseRules::InIceCone(Origin,Forward,Origin+FVector(500,0,601)));
  int32 Charges=1; float Next=0;
  FCitixChaseRules::RefillIce(10,Charges,Next);
- TestEqual(TEXT("First recharge is ninety seconds away"),Next,100.f);
- FCitixChaseRules::RefillIce(99.9f,Charges,Next); TestEqual(TEXT("Cannot recharge early"),Charges,1);
- FCitixChaseRules::RefillIce(100,Charges,Next); TestEqual(TEXT("One charge arrives at ninety seconds"),Charges,2);
+ TestEqual(TEXT("First recharge is fifty seconds away"),Next,60.f);
+ FCitixChaseRules::RefillIce(59.9f,Charges,Next); TestEqual(TEXT("Cannot recharge early"),Charges,1);
+ FCitixChaseRules::RefillIce(60,Charges,Next); TestEqual(TEXT("One charge arrives at fifty seconds"),Charges,2);
  TestEqual(TEXT("Full reserve stops recharge"),Next,0.f);
  FCitixChaseRules::RefillIce(1000,Charges,Next); TestEqual(TEXT("Never stores a third charge"),Charges,2);
- Charges=0; Next=90; FCitixChaseRules::RefillIce(180,Charges,Next);
+ Charges=0; Next=50; FCitixChaseRules::RefillIce(100,Charges,Next);
  TestEqual(TEXT("Long frame catches up without exceeding capacity"),Charges,2);
- TestEqual(TEXT("Freeze lasts three seconds"),FCitixChaseRules::IceDuration,3.f);
+ TestEqual(TEXT("Freeze lasts 4.5 seconds"),FCitixChaseRules::IceDuration,4.5f);
  return true;
 }
 #endif

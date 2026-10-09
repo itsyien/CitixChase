@@ -22,6 +22,10 @@ struct FCitixRoadNode
 
 	UPROPERTY(BlueprintReadOnly, Category = "Road")
 	FVector2D Position = FVector2D::ZeroVector;
+
+	/** Road surface height; the original city retains its zero-height graph. */
+	UPROPERTY(BlueprintReadOnly, Category = "Road")
+	float Elevation = 0.f;
 };
 
 USTRUCT(BlueprintType)
@@ -63,6 +67,9 @@ struct FCitixRoadEdge
 	/** True when this street crosses the river on a bridge. */
 	UPROPERTY(BlueprintReadOnly, Category = "Road")
 	bool bBridge = false;
+	/** Authored driving surface width; zero uses the existing city class defaults. */
+	UPROPERTY(BlueprintReadOnly, Category = "Road")
+	float SurfaceWidth = 0.f;
 };
 
 /**
@@ -95,6 +102,13 @@ struct FCitixRoadNetwork
 
 	float EdgeLength(int32 EdgeIndex) const;
 	FVector2D EdgeDirection(int32 EdgeIndex) const;
+	FVector EdgePoint3D(int32 EdgeIndex, float Fraction) const;
+	FVector EdgeTangent3D(int32 EdgeIndex) const;
+	FTransform EdgeSurfacePose(int32 EdgeIndex, const FVector2D& Point, float Yaw) const;
+	FCitixRoadSpec GetTrafficRoadSpec(int32 EdgeIndex) const;
+	uint32 GetLayoutHash(int32 MapRevision = 0) const;
+	/** Nearest centreline projection in XY; height follows that edge's grade. */
+	bool FindSurfaceHeight(const FVector2D& Point, float& Height, float& Distance) const;
 
 	/** Number of roads meeting at a node (2 = a bend, 3+ = a junction). */
 	int32 GetNodeDegree(int32 NodeIndex) const;

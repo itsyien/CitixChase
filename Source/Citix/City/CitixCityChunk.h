@@ -44,6 +44,10 @@ public:
 	/** Average world position of the chunk (chunk centre). */
 	FVector GetChunkCenter() const;
 
+	/** Refresh existing bush ranges after a graphics preset change. */
+	void RefreshDetailDrawDistance(int32 Preset);
+	static FVector2D DetailDrawDistance(int32 Preset);
+
 	static FVector ComputeInstanceScale(ECitixSurface Surface, const FVector& Size);
 
 protected:

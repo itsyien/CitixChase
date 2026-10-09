@@ -34,7 +34,7 @@ void ACitixIceWave::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 }
 void ACitixIceWave::BeginPlay()
 {
- Super::BeginPlay(); if (HasAuthority()) SetLifeSpan(4.f);
+ Super::BeginPlay(); if (HasAuthority()) SetLifeSpan(FCitixChaseRules::IceDuration+1.f);
  if (GetNetMode()==NM_DedicatedServer) return;
  for (int32 I=0;I<96;++I) Scan->AddInstance(FTransform(FVector::ZeroVector));
  for (int32 I=0;I<48;++I) Crystals->AddInstance(FTransform(FVector::ZeroVector));
@@ -78,7 +78,7 @@ void ACitixIceWave::Tick(float DeltaSeconds)
  }
  const float Progress=FMath::Clamp(Age/SweepSeconds,0.f,1.f);
  // Fast initial burst, then a smooth slowdown as the scan reaches its range.
- const float Radius=160.f+3840.f*FMath::InterpEaseOut(0.f,1.f,Progress,3.f);
+ const float Radius=160.f+(FCitixChaseRules::IceRange-160.f)*FMath::InterpEaseOut(0.f,1.f,Progress,3.f);
  const float Opacity=(1.f-FMath::SmoothStep(.8f,1.2f,Age))*FMath::SmoothStep(0.f,.06f,Age);
  Scan->SetVisibility(Opacity>0); Crystals->SetVisibility(Opacity>0);
  if (Opacity>0) {
@@ -105,7 +105,7 @@ void ACitixIceWave::Tick(float DeltaSeconds)
  const int32 FrostStep=FMath::Clamp(FMath::CeilToInt(Progress*24.f),1,24);
  StampFrost(Scan->GetComponentTransform(),Radius,FrostStep);
  // Stamp origin/heading/radius are immutable. Only their opacity changes as ice thaws.
- const float FrostFade=1.f-FMath::SmoothStep(1.3f,3.4f,Age);
+ const float FrostFade=1.f-FMath::SmoothStep(1.3f,FCitixChaseRules::IceDuration+.4f,Age);
  for (UMaterialInstanceDynamic* MID:FrostMaterials) {
   MID->SetScalarParameterValue(TEXT("Fade"),FrostFade);
  }
@@ -124,5 +124,5 @@ void ACitixIceWave::Tick(float DeltaSeconds)
    }
   }
  }
- if (ShellMaterial) ShellMaterial->SetScalarParameterValue(TEXT("Fade"),1-FMath::SmoothStep(2.5f,3.f,Age));
+ if (ShellMaterial) ShellMaterial->SetScalarParameterValue(TEXT("Fade"),1-FMath::SmoothStep(FCitixChaseRules::IceDuration-.5f,FCitixChaseRules::IceDuration,Age));
 }

@@ -4,6 +4,9 @@
 #include "City/CitixPropGenerator.h"
 #include "City/CitixCityChunk.h"
 #include "Engine/OverlapResult.h"
+#include "Core/CitixGraphicsSettings.h"
+#include "Components/HierarchicalInstancedStaticMeshComponent.h"
+#include "HAL/IConsoleManager.h"
 #include "Physics/Experimental/PhysScene_Chaos.h"
 #include "Core/CitixSurfaceLibrary.h"
 #include "Vehicle/CitixVehiclePawn.h"
@@ -48,12 +51,37 @@ bool FCitixRoadsideArtTest::RunTest(const FString& Parameters)
  TestNotNull(TEXT("Player car includes an airflow effect"),Car->FindComponentByClass<UCitixAirFlowComponent>());
  World->DestroyWorld(false); return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCitixBushPresetDistanceTest,"CitixChase.Roadside.PresetDrawDistance",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FCitixBushPresetDistanceTest::RunTest(const FString&) {
+ auto* World=UWorld::CreateWorld(EWorldType::Game,false); auto* Chunk=World->SpawnActor<ACitixCityChunk>(); Chunk->Init(FIntPoint(0,0),10000); Chunk->QueueBox(ECitixSurface::Bush,FVector(0,0,75),FVector(300,170,150)); Chunk->Finish();
+ auto* Bush=Chunk->FindComponentByClass<UHierarchicalInstancedStaticMeshComponent>(); auto* Settings=NewObject<UCitixGraphicsSettings>(); Settings->bHardwareDetected=true;
+ const float Expected[]={30000,50000,85000,140000};
+ for(int32 Level=0;Level<4;++Level) {
+  Settings->SelectPreset(Level); const float Scale=IConsoleManager::Get().FindConsoleVariable(TEXT("r.ViewDistanceScale"))->GetFloat();
+  TestTrue(TEXT("Existing city bush updates to selected preset distance"),Bush && FMath::IsNearlyEqual(Bush->InstanceEndCullDistance*Scale,Expected[Level],2.f));
+ }
+ Settings->SelectPreset(0); const float Scale=IConsoleManager::Get().FindConsoleVariable(TEXT("r.ViewDistanceScale"))->GetFloat();
+ TestTrue(TEXT("Switching back to Low restores the 200m minimum detail range"),Bush && FMath::IsNearlyEqual(Bush->InstanceEndCullDistance*Scale,30000.f,2.f));
+ Settings->SelectPreset(3); World->DestroyWorld(false); return true;
+}
+// Hosting replaces the initial city world and garbage-collects its components.
+// The process-wide mesh cache must keep its asset alive across that boundary.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCitixBushTravelCacheTest,"CitixChase.Roadside.CacheSurvivesHostTravel",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FCitixBushTravelCacheTest::RunTest(const FString& Parameters)
+{
+ TWeakObjectPtr<UStaticMesh> Before=FCitixSurfaceLibrary::GetMesh(ECitixSurface::Bush);
+ TestTrue(TEXT("Bush is available before host travel collection"),Before.IsValid());
+ CollectGarbage(RF_NoFlags,true);
+ if (!TestTrue(TEXT("Cached bush survives collection of the previous city"),Before.IsValid())) return false;
+ TestEqual(TEXT("Rebuilt city gets the same live mesh"),FCitixSurfaceLibrary::GetMesh(ECitixSurface::Bush),Before.Get());
+ return true;
+}
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCitixAirFlowTest,"CitixChase.FX.TopSpeedAirFlow",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FCitixAirFlowTest::RunTest(const FString& Parameters)
 {
- TestEqual(TEXT("No airflow below ninety percent of top speed"),UCitixAirFlowComponent::StrengthForSpeed(179,200),0.f);
- TestTrue(TEXT("Airflow appears at ninety percent"),UCitixAirFlowComponent::StrengthForSpeed(180,200)>0.f);
- TestTrue(TEXT("Airflow builds toward full speed"),UCitixAirFlowComponent::StrengthForSpeed(190,200)>UCitixAirFlowComponent::StrengthForSpeed(180,200));
+ TestEqual(TEXT("No airflow at eighty percent of top speed"),UCitixAirFlowComponent::StrengthForSpeed(160,200),0.f);
+ TestTrue(TEXT("Airflow appears above eighty percent"),UCitixAirFlowComponent::StrengthForSpeed(161,200)>0.f);
+ TestTrue(TEXT("Airflow builds toward full speed"),UCitixAirFlowComponent::StrengthForSpeed(190,200)>UCitixAirFlowComponent::StrengthForSpeed(161,200));
  TestEqual(TEXT("Boost cannot make airflow intensity unbounded"),UCitixAirFlowComponent::StrengthForSpeed(300,200),1.f);
  TestEqual(TEXT("Invalid speed cap cannot create an effect"),UCitixAirFlowComponent::StrengthForSpeed(200,0),0.f);
  return true;

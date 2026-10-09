@@ -90,7 +90,7 @@ bool FCitixLowTierTest::RunTest(const FString& Parameters)
  auto* Bloom=IConsoleManager::Get().FindConsoleVariable(TEXT("r.BloomQuality"));
  TestNotNull(TEXT("Runtime distance control exists"),Distance); TestNotNull(TEXT("Runtime foliage distance exists"),Foliage);
  if(Distance) TestTrue(TEXT("Low shortens distant visibility"),FMath::IsNearlyEqual(Distance->GetFloat(),.15f));
- if(Foliage) TestTrue(TEXT("Low shortens distant foliage"),FMath::IsNearlyEqual(Foliage->GetFloat(),.35f));
+ if(Foliage) TestTrue(TEXT("Low preserves the explicit detail distance floor"),FMath::IsNearlyEqual(Foliage->GetFloat(),1.f));
  if(Bloom) TestEqual(TEXT("Low removes bloom cost"),Bloom->GetInt(),0);
  Settings->SelectPreset(3);
  if(Distance) TestTrue(TEXT("Max restores full view distance"),FMath::IsNearlyEqual(Distance->GetFloat(),1.f));

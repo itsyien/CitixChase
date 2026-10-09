@@ -18,6 +18,8 @@
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Core/CitixSurfaceLibrary.h"
 #include "Materials/MaterialInterface.h"
+#include "Chase/CitixRelayLayout.h"
+#include "UObject/UnrealType.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCitixChaseRulesTest, "CitixChase.Rules.RoundRules", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -62,8 +64,8 @@ bool FCitixChaseRulesTest::RunTest(const FString& Parameters)
 	Car->GetVehicleMovement()->ReconcileBoostCharge(.4f);
 	TestEqual(TEXT("Guest recovers the authoritative parked reserve"), Car->GetVehicleMovement()->GetBoostCharge(), .4f);
 	TestEqual(TEXT("Chaser has an absolute 292.5 km/h ceiling"), Car->GetVehicleMovement()->MaxSpeed, 292.5f / .036f);
-	TestEqual(TEXT("Chaser engine force increased thirty percent"), Car->GetVehicleMovement()->MaxEngineForce, Baseline.EngineForce * 1.3f);
-	TestEqual(TEXT("Chaser engine force increased thirty percent"), Car->GetVehicleMovement()->MaxEngineForce, Baseline.EngineForce * 1.3f);
+	TestEqual(TEXT("Chaser low-speed force is 2.7 times base"), Car->GetVehicleMovement()->MaxEngineForce, Baseline.EngineForce * 2.7f);
+	TestEqual(TEXT("Chaser low-speed force is 2.7 times base"), Car->GetVehicleMovement()->MaxEngineForce, Baseline.EngineForce * 2.7f);
 	TestEqual(TEXT("Four 25-point rams wreck a 100-point runner car"), FCitixChaseRules::RamsToWreck(100.f), 4);
 	TestEqual(TEXT("One wreck leaves the runner at 50 health"), FCitixChaseRules::HealthAfterWreck(100.f), 50.f);
 	TestEqual(TEXT("A second wreck reaches zero health"), FCitixChaseRules::HealthAfterWreck(50.f), 0.f);
@@ -74,7 +76,23 @@ bool FCitixChaseRulesTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Repeated contact before separation is rejected"), FCitixChaseRules::IsValidRam(60.f, 1.f));
 	TestFalse(TEXT("Contact held through the cooldown is rejected"), FCitixChaseRules::IsValidRam(60.f, 2.f, false));
 	TestFalse(TEXT("Four relays keep exits locked"),FCitixChaseRules::AreExitsUnlocked(4));
- TestTrue(TEXT("Five completed relays unlock exits"),FCitixChaseRules::AreExitsUnlocked(5));
+ TestTrue(TEXT("Exactly five relays unlock exits"),FCitixChaseRules::AreExitsUnlocked(5));
+ TestEqual(TEXT("Six active sites provide a choice beyond five required"),FCitixChaseRules::ActiveRelayCount,6);
+ TestEqual(TEXT("Original car starts with four integrity points"),FCitixChaseRules::VehicleIntegrity-FCitixChaseRules::InitialVehicleHits(false),4);
+ TestEqual(TEXT("Replacement starts with exactly two integrity points"),FCitixChaseRules::VehicleIntegrity-FCitixChaseRules::InitialVehicleHits(true),2);
+ TestEqual(TEXT("Two more rams destroy the replacement"),FCitixChaseRules::RamsToWreck(50.f),2);
+ for (const FName Name : {FName(TEXT("RelayBeacons")),FName(TEXT("ExitBeacons")),FName(TEXT("ReplacementBeacons")),FName(TEXT("ReplacementCars")),FName(TEXT("BreakawayBeacons"))})
+  TestNotNull(TEXT("Round actor references are tracked through garbage collection"),FindFProperty<FArrayProperty>(ACitixChaseGameMode::StaticClass(),Name));
+ {
+  TArray<FVector> Sites;
+  for (int32 I=0; I<36; ++I) { const float Angle=I*2.f*PI/36.f; Sites.Add(FVector(40000.f*FMath::Cos(Angle),40000.f*FMath::Sin(Angle),100.f)); }
+  const auto RoundOne=FCitixRelayLayout::Select(Sites,123),RoundTwo=FCitixRelayLayout::Select(Sites,123),Rematch=FCitixRelayLayout::Select(Sites,124);
+  TestEqual(TEXT("Exactly six active validated sites"),RoundOne.Num(),FCitixChaseRules::ActiveRelayCount);
+  TestTrue(TEXT("Same match selection is stable for role swap"),RoundOne==RoundTwo);
+  TestTrue(TEXT("New match seed changes the active site membership"),Rematch.ContainsByPredicate([&RoundOne](const FVector& P){ return !RoundOne.Contains(P); }));
+  for (const FVector& Site:RoundOne) TestTrue(TEXT("Active objectives always belong to the validated pool"),Sites.Contains(Site));
+ }
+ TestTrue(TEXT("Additional relays keep exits unlocked"),FCitixChaseRules::AreExitsUnlocked(6));
  const float GateStart=10.f, GateEnd=GateStart+FCitixChaseRules::ChaserGateDragDuration;
  TestEqual(TEXT("Chaser gate drag lasts 1.2 seconds"), FCitixChaseRules::ChaserGateDragDuration,1.2f);
  TestEqual(TEXT("Gate slowdown starts without a speed jump"),FCitixChaseRules::GateSlowScale(GateStart,GateStart,GateEnd),1.f);
@@ -82,7 +100,7 @@ bool FCitixChaseRulesTest::RunTest(const FString& Parameters)
  TestTrue(TEXT("Gate reaches thirty percent slowdown"),FMath::IsNearlyEqual(FCitixChaseRules::GateSlowScale(10.8f,GateStart,GateEnd),.7f));
  TestTrue(TEXT("Gate releases smoothly before expiry"),FCitixChaseRules::GateSlowScale(11.1f,GateStart,GateEnd)>.7f);
  TestEqual(TEXT("Gate slowdown expires at 1.2 seconds"),FCitixChaseRules::GateSlowScale(GateEnd,GateStart,GateEnd),1.f);
- TestEqual(TEXT("Relay interaction radius increased by 200 percent"),FCitixChaseRules::RelayInteractionRadius,1350.f);
+ TestEqual(TEXT("Relay sync requires a 9.6 meter radius"),FCitixChaseRules::RelayInteractionRadius,960.f);
  auto* Gate=NewObject<ACitixDestinationBeacon>(); Gate->SetBreakawayStation(FVector::ZeroVector,0);
  TArray<UInstancedStaticMeshComponent*> GateParts; Gate->GetComponents(GateParts);
  for (auto* Parts:GateParts) if (Parts->GetName()==TEXT("GateEdges")) {
@@ -158,7 +176,7 @@ bool FCitixChaseRulesTest::RunTest(const FString& Parameters)
  FCitixRouteHelper::BuildRoutePoints(LayoutRoads,FVector(400,0,60),FVector(700,0,60),DirectRoute);
  bool Direct=true; for (const FVector& Point:DirectRoute) Direct &= Point.X>=400 && Point.X<=700;
  TestTrue(TEXT("Same-road guidance does not route behind the driver"),Direct);
- { FCitixTrafficSnapshot A,B; A.Timestamp=1; B.Timestamp=1.1f; B.Location=FVector(100,0,0); B.Velocity=FVector(1000,0,0);
+ { FCitixTrafficSnapshot A,B; A.bVisible=true; B.bVisible=true; A.Timestamp=1; B.Timestamp=1.1f; B.Location=FVector(100,0,0); B.Velocity=FVector(1000,0,0);
  const TArray<FCitixTrafficSnapshot> Samples={A,B};
  TestTrue(TEXT("Traffic interpolates timestamped midpoint"),FMath::IsNearlyEqual(ACitixTrafficVehicle::SampleMotion(Samples,1.05f).Location.X,50.f,.01f));
  TestTrue(TEXT("Traffic extrapolation holds after 100 ms"),ACitixTrafficVehicle::SampleMotion(Samples,2.f).Location.Equals(FVector(200,0,0),.01f));

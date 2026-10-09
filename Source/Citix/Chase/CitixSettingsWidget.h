@@ -27,6 +27,7 @@ private:
  UFUNCTION() void Resume();
  UFUNCTION() void ResolutionChanged(float Value);
  UFUNCTION() void FPSChanged(float Value);
+ UFUNCTION() void VolumeChanged(float Value);
  UFUNCTION() void BeginInteraction();
  UFUNCTION() void EndInteraction();
  bool bCapturing=false;
@@ -41,4 +42,6 @@ private:
  UPROPERTY() TObjectPtr<USlider> FPSSlider;
  UPROPERTY() TObjectPtr<UTextBlock> ResolutionValue;
  UPROPERTY() TObjectPtr<UTextBlock> FPSValue;
+ UPROPERTY() TObjectPtr<USlider> VolumeSlider;
+ UPROPERTY() TObjectPtr<UTextBlock> VolumeValue;
 };

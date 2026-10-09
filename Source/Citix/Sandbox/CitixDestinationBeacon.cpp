@@ -7,6 +7,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/Material.h"
 #include "Chase/CitixChaseGameState.h"
+#include "Chase/CitixChaseRules.h"
 #include "Chase/CitixChasePlayerState.h"
 #include "GameFramework/PlayerController.h"
 #include "Core/CitixSurfaceLibrary.h"
@@ -66,6 +67,8 @@ void ACitixDestinationBeacon::SetBreakawayStation(const FVector& Location,int32 
 	ForceNetUpdate();
 }
 
+void ACitixDestinationBeacon::SetExitProjection(const FVector& Location) { bExitProjection=true; SetRelayProjection(Location); }
+
 void ACitixDestinationBeacon::SetRelayProjection(const FVector& Location)
 {
  bRelayProjection=true; bAlwaysRelevant=true;
@@ -95,7 +98,7 @@ void ACitixDestinationBeacon::Hide()
 	{
 		BeaconMesh->SetVisibility(false, true);
 	}
- StationFrame->SetVisibility(false); StationLights->SetVisibility(false);
+ StationFrame->SetVisibility(false); StationLights->SetVisibility(false); if(bRelayProjection) GateEdges->SetVisibility(false);
 }
 
 void ACitixDestinationBeacon::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -105,7 +108,7 @@ void ACitixDestinationBeacon::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 	DOREPLIFETIME(ACitixDestinationBeacon, bBeamVisible);
 	DOREPLIFETIME(ACitixDestinationBeacon, BeamSurface);
 	DOREPLIFETIME(ACitixDestinationBeacon, bBreakawayStation);
-	DOREPLIFETIME(ACitixDestinationBeacon, StationIndex); DOREPLIFETIME(ACitixDestinationBeacon,GateWidth); DOREPLIFETIME(ACitixDestinationBeacon,bRelayProjection);
+	DOREPLIFETIME(ACitixDestinationBeacon, StationIndex); DOREPLIFETIME(ACitixDestinationBeacon,GateWidth); DOREPLIFETIME(ACitixDestinationBeacon,bRelayProjection); DOREPLIFETIME(ACitixDestinationBeacon,bExitProjection);
 }
 
 void ACitixDestinationBeacon::Tick(float DeltaSeconds)
@@ -117,7 +120,7 @@ void ACitixDestinationBeacon::Tick(float DeltaSeconds)
   const auto* PS=PC ? PC->GetPlayerState<ACitixChasePlayerState>() : nullptr;
   const bool Chaser=PS && PS->ChaseRole==ECitixChaseRole::Chaser;
   const bool Cooling=S && S->BreakawayReadyAt>S->GetServerWorldTimeSeconds();
-  const FLinearColor Color=bRelayProjection ? FLinearColor(.02f,1.5f,4.f) : Chaser ? FLinearColor(4.f,.015f,.03f) : Cooling ? FLinearColor(.12f,.14f,.16f) : FLinearColor(4.f,2.f,.025f);
+  const FLinearColor Color=bRelayProjection ? bExitProjection ? FLinearColor(.05f,.6f,.32f) : FLinearColor(.02f,1.5f,4.f) : Chaser ? FLinearColor(4.f,.015f,.03f) : Cooling ? FLinearColor(.12f,.14f,.16f) : FLinearColor(4.f,2.f,.025f);
   if (Color!=LastGlow) {
    LastGlow=Color;
    if (auto* Material=Cast<UMaterialInstanceDynamic>(StationLights->GetMaterial(0))) { Material->SetVectorParameterValue(TEXT("Color"),Color); Material->SetVectorParameterValue(TEXT("BaseColor"),Color); }
@@ -175,7 +178,7 @@ void ACitixDestinationBeacon::OnRep_BeamVisible()
 	{
 		BeaconMesh->SetVisibility(false);
   PrimaryActorTick.TickInterval=.1f;
-  StationFrame->SetCullDistances(0,40000); StationLights->SetCullDistances(0,40000);
+  StationFrame->SetCullDistances(0,0); StationLights->SetCullDistances(0,0);
   StationLights->SetCastShadow(false);
 		StationFrame->ClearInstances(); StationLights->ClearInstances(); GateEdges->ClearInstances(); LastGlow=FLinearColor::Transparent; bSymbolsInitialized=false;
 		if (StationFrame->GetInstanceCount() == 0)
@@ -216,8 +219,14 @@ void ACitixDestinationBeacon::OnRep_BeamVisible()
   StationFrame->SetStaticMesh(Cube); StationLights->SetStaticMesh(Cube);
   StationFrame->SetMaterial(0,FCitixSurfaceLibrary::GetMaterial(ECitixSurface::Trim));
   auto* Glow=UMaterialInstanceDynamic::Create(FCitixSurfaceLibrary::GetMaterial(ECitixSurface::EmissiveCool)->GetMaterial(),this);
-  Glow->SetVectorParameterValue(TEXT("Color"),FLinearColor(.02f,1.5f,4.f)); Glow->SetVectorParameterValue(TEXT("BaseColor"),FLinearColor(.02f,1.5f,4.f)); StationLights->SetMaterial(0,Glow);
+  const FLinearColor Ink=bExitProjection ? FLinearColor(.05f,.6f,.32f) : FLinearColor(.02f,1.5f,4.f); Glow->SetVectorParameterValue(TEXT("Color"),Ink); Glow->SetVectorParameterValue(TEXT("BaseColor"),Ink); StationLights->SetMaterial(0,Glow);
   StationFrame->AddInstance(FTransform(FRotator::ZeroRotator,FVector(0,0,-3080),FVector(3.8f,3.8f,.2f)));
+  GateEdges->SetStaticMesh(Cube); GateEdges->SetCollisionEnabled(ECollisionEnabled::NoCollision); GateEdges->SetCastShadow(false);
+  GateEdges->SetMaterial(0,FCitixSurfaceLibrary::GetTintedEmissiveMaterial(bExitProjection ? FLinearColor(.08f,.6f,.32f) : FLinearColor(.08f,.45f,.7f))); GateEdges->SetVisibility(bBeamVisible);
+  for(int32 I=0;I<32;++I) {
+   const float Angle=I*2*PI/32, Radius=bExitProjection ? 800.f : FCitixChaseRules::RelayInteractionRadius;
+   GateEdges->AddInstance(FTransform(FRotator(0,FMath::RadiansToDegrees(Angle)+90,0),FVector(FMath::Cos(Angle)*Radius,FMath::Sin(Angle)*Radius,-3095),FVector(Radius*2*PI/32*.82f/100.f,.04f,.025f)));
+  }
   for (float Z : {60.f,160.f,260.f}) for (int32 I=0; I<6; ++I) {
    const float Angle=I*60.f; const float R=FMath::DegreesToRadians(Angle);
    StationLights->AddInstance(FTransform(FRotator(0,Angle+90.f,0),FVector(FMath::Cos(R)*170.f,FMath::Sin(R)*170.f,-3090.f+Z),FVector(1.75f,.035f,.04f)));

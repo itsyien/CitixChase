@@ -4,6 +4,7 @@
 #include "CitixAirFlowComponent.generated.h"
 class UInstancedStaticMeshComponent;
 class UMaterialInterface;
+class UStaticMesh;
 UCLASS(ClassGroup=(Citix),meta=(BlueprintSpawnableComponent))
 class CITIX_API UCitixAirFlowComponent : public UActorComponent
 {
@@ -17,6 +18,8 @@ public:
  UPROPERTY() TObjectPtr<UInstancedStaticMeshComponent> Ribbons;
 private:
  UPROPERTY() TObjectPtr<UMaterialInterface> RibbonMaterial;
+ UPROPERTY() TObjectPtr<UStaticMesh> RibbonMesh;
+ uint8 FittedCarType=255;
  float Strength=0.f;
  float SubmittedStrength=-1.f;
 };

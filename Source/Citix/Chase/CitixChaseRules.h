@@ -5,9 +5,25 @@
 /** Pure chase rules: kept independent so the authoritative mode and tests agree. */
 struct FCitixChaseRules
 {
-	static constexpr float IceRange=4000.f;
- static constexpr float IceRecharge=90.f;
- static constexpr float IceDuration=3.f;
+	static constexpr float IceRange=5600.f;
+ static constexpr float IceRecharge=50.f;
+ static constexpr float IceDuration=4.5f;
+ static bool RunnerTrackingVisible(bool InSmoke,float Distance) {return !InSmoke || Distance>=15000.f;}
+ static constexpr float RapidBrakeDuration=.8f;
+ static constexpr float RapidBrakeRecharge=20.f;
+ static FVector RapidBrakeVelocity(FVector V,float Dt) {
+  const float Speed=V.Size2D();
+  const float Next=FMath::Max(0.f,Speed-14000.f*FMath::Max(0.f,Dt));
+  if(Speed>0) {V.X*=Next/Speed; V.Y*=Next/Speed;}
+  return V;
+ }
+ static bool CanRapidBrake(bool Chaser,bool Driving,bool Pursuit,int32 Charges,float Speed) {return Chaser && Driving && Pursuit && Charges>0 && Speed>100.f;}
+ static void RefillRapidBrake(float Now,int32& Charges,float& Next) {
+  Charges=FMath::Clamp(Charges,0,1);
+  if(Charges==1) {Next=0; return;}
+  if(Next<=0) Next=Now+RapidBrakeRecharge;
+  if(Now>=Next) {Charges=1; Next=0;}
+ }
  static bool InIceCone(const FVector& Origin,const FVector& Forward,const FVector& Target) {
   const FVector Delta=Target-Origin;
   const float Distance=Delta.Size2D();
@@ -28,8 +44,16 @@ struct FCitixChaseRules
 	static constexpr float MinimumClosingSpeedKmh = 15.f;
 	static constexpr float MinimumSeparationSeconds = 1.5f;
 	static constexpr int32 RelaysRequired = 5;
-	static constexpr float RelayInteractionRadius = 1350.f;
-	static constexpr float BreakawayDuration = 5.f;
+	static constexpr int32 ActiveRelayCount = 6; // One optional objective keeps route choice meaningful.
+	static constexpr int32 VehicleIntegrity = 4;
+	static constexpr int32 ReplacementIntegrity = 2;
+	static int32 InitialVehicleHits(bool Replacement) { return Replacement ? VehicleIntegrity - ReplacementIntegrity : 0; }
+	static constexpr float RelayInteractionRadius = 960.f;
+	static constexpr float RelaySyncDuration=1.f;
+ static constexpr float EscapeCommitDuration=4.f;
+ static bool RelayEligible(float Distance,float Kmh,float Height=0.f) {return Distance<=RelayInteractionRadius && Kmh<60.f && FMath::Abs(Height)<=350.f;}
+ static float CommitmentRemaining(float Started,float Now,float Duration) {return FMath::Max(0.f,Duration-FMath::Max(0.f,Now-Started));}
+ static constexpr float BreakawayDuration = 5.f;
  static constexpr float GateSpacing = 20000.f; // Minimum connected-road separation between gates.
 	static constexpr float ChaserBreakawayScale = .7f;
  static constexpr float ChaserGateDragDuration = 1.2f;
@@ -44,7 +68,7 @@ struct FCitixChaseRules
  static constexpr float RunnerSpeedScale = 1.2f;
  static float OnFootSpeedScale(bool Runner, bool Sprinting) { return (Sprinting ? 1.1f : 1.f) * (Runner ? 1.5f : 1.f); }
  static float SpeedLimit(bool Runner) { return (Runner ? 190.f * RunnerSpeedScale : 225.f * ChaserSpeedScale) / .036f; }
- static float EngineScale(bool Runner, float Kmh) { return Runner ? FMath::Lerp(2.5f, .65f, FMath::SmoothStep(80.f, 140.f, Kmh / RunnerSpeedScale)) * RunnerSpeedScale : ChaserSpeedScale; }
+ static float EngineScale(bool Runner, float Kmh) { return Runner ? FMath::Lerp(2.5f, .65f, FMath::SmoothStep(80.f, 140.f, Kmh / RunnerSpeedScale)) * RunnerSpeedScale : FMath::Lerp(2.7f,1.82f,FMath::SmoothStep(80.f,160.f,Kmh)); }
  static bool ReplacementReady(float Now, float ReadyAt, bool Used, float Speed, float Distance) { return ReadyAt > 0.f && Now >= ReadyAt && !Used && Speed < 10.f && Distance <= 300.f; }
  static void RefillAmmo(float Now, int32& Ammo, float& Next) { if (Ammo >= 15) { Next = 0.f; return; } if (Next <= 0.f) Next = Now + 8.f; while (Next <= Now && Ammo < 15) { ++Ammo; Next += 8.f; } if (Ammo == 15) Next = 0.f; }
  static FVector LimitVelocity(FVector V, float Limit) { const float Speed = V.Size2D(); if (Limit > 0.f && Speed > Limit) { V.X *= Limit/Speed; V.Y *= Limit/Speed; } return V; }

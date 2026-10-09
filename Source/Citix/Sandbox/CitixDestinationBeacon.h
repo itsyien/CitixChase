@@ -27,6 +27,7 @@ public:
 	void SetDestination(const FVector& Location, ECitixSurface Surface);
 	void SetBreakawayStation(const FVector& Location,int32 Index,float Width=1200.f);
  void SetRelayProjection(const FVector& Location);
+ void SetExitProjection(const FVector& Location);
 	void Hide();
 
 	/** Respawn beam (server): tall blue pillar, auto-destroyed. Replicates. */
@@ -46,6 +47,7 @@ private:
 	UPROPERTY(Replicated) int32 StationIndex = INDEX_NONE;
  UPROPERTY(ReplicatedUsing=OnRep_BeamVisible) float GateWidth = 1200.f;
  UPROPERTY(ReplicatedUsing=OnRep_BeamVisible) bool bRelayProjection = false;
+ UPROPERTY(ReplicatedUsing=OnRep_BeamVisible) bool bExitProjection=false;
  FLinearColor LastGlow=FLinearColor::Transparent;
  bool bSymbolsInitialized=false;
  bool bLastChaser=false;

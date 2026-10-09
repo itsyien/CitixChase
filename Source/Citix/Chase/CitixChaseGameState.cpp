@@ -1,6 +1,7 @@
 #include "Chase/CitixChaseGameState.h"
+#include "Misc/FileHelper.h"
 #include "Net/UnrealNetwork.h"
-#include "Sandbox/CitixPulseBolt.h"
+#include "Sandbox/CitixBulletTracer.h"
 #include "Sandbox/CitixHitSpark.h"
 #include "UnrealClient.h"
 #include "Misc/CommandLine.h"
@@ -8,6 +9,8 @@
 #include "TimerManager.h"
 #include "Player/CitixDrivingPlayerController.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameFramework/PlayerState.h"
+#include "GameFramework/Pawn.h"
 #include "Sound/SoundWaveProcedural.h"
 void ACitixChaseGameState::MulticastPixelExplosion_Implementation(FVector_NetQuantize Location)
 {
@@ -37,13 +40,9 @@ void ACitixChaseGameState::MulticastPistolShot_Implementation(FVector_NetQuantiz
 			FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("Screenshots")/(TEXT("PistolHit-")+Tag+TEXT(".png")),true,false);
 		}, .08f, false);
 	}
-	if (From != To) if (ACitixPulseBolt* Bolt = GetWorld()->SpawnActor<ACitixPulseBolt>())
-	{
-		Bolt->Fire(From, To, ECitixSurface::EmissiveWarm);
-		Bolt->SetLifeSpan(2.f);
-	}
+ if (From != To) ACitixBulletTracer::Spawn(GetWorld(),From,To,Shooter ? Shooter->GetPawn() : nullptr);
 }
-void ACitixChaseGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const { Super::GetLifetimeReplicatedProps(OutLifetimeProps); DOREPLIFETIME(ACitixChaseGameState, RoomDisplayName); DOREPLIFETIME(ACitixChaseGameState, ImpactSerial); DOREPLIFETIME(ACitixChaseGameState, BreakawayLocations); DOREPLIFETIME(ACitixChaseGameState, BreakawayUntil); DOREPLIFETIME(ACitixChaseGameState, BreakawayReadyAt); DOREPLIFETIME(ACitixChaseGameState, BreakawayWidths); DOREPLIFETIME(ACitixChaseGameState, BreakawayYaws); DOREPLIFETIME(ACitixChaseGameState, Phase); DOREPLIFETIME(ACitixChaseGameState, RoundNumber); DOREPLIFETIME(ACitixChaseGameState, CitySeed); DOREPLIFETIME(ACitixChaseGameState, CityConfigHash); DOREPLIFETIME(ACitixChaseGameState, LayoutRelayLocations); DOREPLIFETIME(ACitixChaseGameState, LayoutExitLocations); DOREPLIFETIME(ACitixChaseGameState, LayoutSpawnLocations); DOREPLIFETIME(ACitixChaseGameState, LayoutReplacementLocations); DOREPLIFETIME(ACitixChaseGameState, ActiveReplacementLocations); DOREPLIFETIME(ACitixChaseGameState, PhaseSecondsRemaining); DOREPLIFETIME(ACitixChaseGameState, CompletedRelays); DOREPLIFETIME(ACitixChaseGameState, ActivatedRelays); DOREPLIFETIME(ACitixChaseGameState, bExitsUnlocked); DOREPLIFETIME(ACitixChaseGameState, StatusText); DOREPLIFETIME(ACitixChaseGameState, bRunnerRevealed); DOREPLIFETIME(ACitixChaseGameState, RevealSecondsRemaining); DOREPLIFETIME(ACitixChaseGameState, NextRevealSecondsRemaining); DOREPLIFETIME(ACitixChaseGameState, bInteractionActive); DOREPLIFETIME(ACitixChaseGameState, InteractionSecondsRemaining); }
+void ACitixChaseGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const { Super::GetLifetimeReplicatedProps(OutLifetimeProps); DOREPLIFETIME(ACitixChaseGameState, RoomDisplayName); DOREPLIFETIME(ACitixChaseGameState, ImpactSerial); DOREPLIFETIME(ACitixChaseGameState, BreakawayLocations); DOREPLIFETIME(ACitixChaseGameState, BreakawayUntil); DOREPLIFETIME(ACitixChaseGameState, BreakawayReadyAt); DOREPLIFETIME(ACitixChaseGameState, BreakawayWidths); DOREPLIFETIME(ACitixChaseGameState, BreakawayYaws); DOREPLIFETIME(ACitixChaseGameState, Phase); DOREPLIFETIME(ACitixChaseGameState, RoundNumber); DOREPLIFETIME(ACitixChaseGameState, CitySeed); DOREPLIFETIME(ACitixChaseGameState, CityConfigHash); DOREPLIFETIME(ACitixChaseGameState, bHillsideMap); DOREPLIFETIME(ACitixChaseGameState, MapRevision); DOREPLIFETIME(ACitixChaseGameState, LayoutRelayLocations); DOREPLIFETIME(ACitixChaseGameState, LayoutExitLocations); DOREPLIFETIME(ACitixChaseGameState, LayoutSpawnLocations); DOREPLIFETIME(ACitixChaseGameState, LayoutReplacementLocations); DOREPLIFETIME(ACitixChaseGameState, ActiveReplacementLocations); DOREPLIFETIME(ACitixChaseGameState, PhaseSecondsRemaining); DOREPLIFETIME(ACitixChaseGameState, CompletedRelays); DOREPLIFETIME(ACitixChaseGameState, ActivatedRelays); DOREPLIFETIME(ACitixChaseGameState, bExitsUnlocked); DOREPLIFETIME(ACitixChaseGameState, StatusText); DOREPLIFETIME(ACitixChaseGameState, bRunnerRevealed); DOREPLIFETIME(ACitixChaseGameState, RevealSecondsRemaining); DOREPLIFETIME(ACitixChaseGameState, NextRevealSecondsRemaining); DOREPLIFETIME(ACitixChaseGameState, bInteractionActive); DOREPLIFETIME(ACitixChaseGameState, InteractionSecondsRemaining); }
 
 void ACitixChaseGameState::PlayShotFeedback(UWorld* World, const FVector& Muzzle, bool Dry)
 {
@@ -58,4 +57,20 @@ void ACitixChaseGameState::PlayShotFeedback(UWorld* World, const FVector& Muzzle
  }
  Sound->QueueAudio(reinterpret_cast<const uint8*>(Samples.GetData()),Samples.Num()*sizeof(int16));
  UGameplayStatics::PlaySoundAtLocation(World,Sound,Muzzle,.55f);
+}
+
+void ACitixChaseGameState::MulticastRelaySprinkles_Implementation(FVector_NetQuantize Location,FVector_NetQuantize Velocity)
+{
+ ACitixHitSpark::SpawnRelaySprinkles(GetWorld(),Location,Velocity);
+ if(FParse::Param(FCommandLine::Get(),TEXT("CitixRelayFXProbe"))) {
+  FString Tag; FParse::Value(FCommandLine::Get(),TEXT("CitixNetTag="),Tag);
+  FFileHelper::SaveStringToFile(TEXT("{\"passed\":true,\"relay_burst_received\":true}"),*(FPaths::ProjectSavedDir()/(TEXT("RelayFX-")+Tag+TEXT(".json"))));
+  FTimerHandle Timer;
+  GetWorldTimerManager().SetTimer(Timer,[Tag](){ FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("Screenshots")/(TEXT("RelayFX-")+Tag+TEXT(".png")),true,false); },.15f,false);
+ }
+}
+
+void ACitixChaseGameState::MulticastRapidBrake_Implementation(FVector_NetQuantize Location,FVector_NetQuantize Velocity)
+{
+ ACitixHitSpark::SpawnRapidBrake(GetWorld(),Location,Velocity);
 }

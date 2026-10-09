@@ -257,7 +257,6 @@ protected:
 	void UpdateExplosion(float DeltaSeconds);
 	void HideExplosionVisuals();
 	void PublishNetState();
-	void UpdateChaseTracker();
 
 	void AddDrivingMappingContext();
 	void RemoveDrivingMappingContext();
@@ -275,14 +274,6 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Citix|Components")
 	TObjectPtr<UCameraComponent> ChaseCamera;
-
-	/** Local-only reveal cue for the chaser: a segmented ring and forward arrow. */
-	UPROPERTY()
-	TObjectPtr<USceneComponent> ChaseTrackerRoot;
-	UPROPERTY()
-	TArray<TObjectPtr<UStaticMeshComponent>> ChaseTrackerSegments;
-	UPROPERTY()
-	TObjectPtr<UStaticMeshComponent> ChaseTrackerArrow;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Citix|Components")
 	TObjectPtr<UCitixVehicleMovementComponent> VehicleMovement;

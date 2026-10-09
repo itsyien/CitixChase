@@ -85,6 +85,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Citix|Vehicle")
 	void SetThrottleInput(float Value);
  bool bIceFrozen=false;
+ bool bRapidBraking=false;
  bool bInBush=false;
 
 	UFUNCTION(BlueprintCallable, Category = "Citix|Vehicle")
@@ -225,6 +226,7 @@ public:
 	float CrashDamageMax = 45.f;
 
 	const TArray<FCitixWheelRuntimeState>& GetWheelStates() const { return WheelStates; }
+	const TArray<FCitixWheelSetup>& GetWheelSetups() const { return Wheels; }
 
 	// ---- Tuning (defaults are tuned in cm/kg/s) -----------------------
 

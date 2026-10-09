@@ -82,6 +82,7 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void ServerReportChaseCityIdentity(int32 Seed, int32 LayoutHash);
+	UFUNCTION(Server, Reliable) void ServerSelectLobbyMap(bool Hillside);
 
 	// ---- Shared-world verbs (stage 2): clients send, server executes --------
 	UFUNCTION(Server, Reliable)
@@ -105,6 +106,7 @@ public:
 	void ServerReloadWeapon();
  UFUNCTION(Server,Reliable) void ServerRunnerSmoke();
  UFUNCTION(Server,Reliable) void ServerChaserIce();
+ UFUNCTION(Server,Reliable) void ServerChaserRapidBrake();
 
 	/** Buy a shop row (server validates proximity/funds/ownership). */
 	UFUNCTION(Server, Reliable)

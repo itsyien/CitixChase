@@ -10,6 +10,7 @@
 #include "Materials/MaterialExpressionPerInstanceCustomData.h"
 #include "Materials/MaterialExpressionTextureCoordinate.h"
 #include "Materials/MaterialExpressionTime.h"
+#include "Materials/MaterialExpressionMultiply.h"
 #include "MaterialEditingLibrary.h"
 #include "MeshDescription.h"
 #include "StaticMeshAttributes.h"
@@ -106,16 +107,17 @@ bool CitixCreateRoadsideAssets()
  const FString AirPath=TEXT("/Game/Citix/Materials/M_CitixAirFlow");
  auto* AirPackage=FullPackage(AirPath); auto* Air=FindObject<UMaterial>(AirPackage,TEXT("M_CitixAirFlow"));
  if (!Air) Air=NewObject<UMaterial>(AirPackage,TEXT("M_CitixAirFlow"),RF_Public|RF_Standalone);
- Air->GetExpressionCollection().Empty(); Air->BlendMode=BLEND_Additive; Air->SetShadingModel(MSM_Unlit); Air->TwoSided=true; Air->SetUsageByFlag(MATUSAGE_InstancedStaticMeshes,true);
- auto* White=Cast<UMaterialExpressionConstant3Vector>(UMaterialEditingLibrary::CreateMaterialExpression(Air,UMaterialExpressionConstant3Vector::StaticClass())); White->Constant=FLinearColor(.75f,1.05f,1.3f);
- UMaterialEditingLibrary::ConnectMaterialProperty(White,TEXT(""),MP_EmissiveColor);
+ Air->GetExpressionCollection().Empty(); Air->BlendMode=BLEND_Translucent; Air->SetShadingModel(MSM_Unlit); Air->TwoSided=true; Air->SetUsageByFlag(MATUSAGE_InstancedStaticMeshes,true);
+ auto* Tint=UMaterialEditingLibrary::CreateMaterialExpression(Air,UMaterialExpressionVertexColor::StaticClass());
+ auto* Glow=Cast<UMaterialExpressionMultiply>(UMaterialEditingLibrary::CreateMaterialExpression(Air,UMaterialExpressionMultiply::StaticClass())); Glow->A.Connect(0,Tint); Glow->ConstB=1.5f;
+ UMaterialEditingLibrary::ConnectMaterialProperty(Glow,TEXT(""),MP_EmissiveColor);
  auto* Opacity=Cast<UMaterialExpressionCustom>(UMaterialEditingLibrary::CreateMaterialExpression(Air,UMaterialExpressionCustom::StaticClass())); Opacity->OutputType=CMOT_Float1;
  auto Input=[&](const TCHAR* Name,UMaterialExpression* Expr) {FCustomInput I; I.InputName=Name; I.Input.Connect(0,Expr); Opacity->Inputs.Add(I);};
  auto* UV=UMaterialEditingLibrary::CreateMaterialExpression(Air,UMaterialExpressionTextureCoordinate::StaticClass()); Input(TEXT("UV"),UV);
  auto* Time=UMaterialEditingLibrary::CreateMaterialExpression(Air,UMaterialExpressionTime::StaticClass()); Input(TEXT("Time"),Time);
  auto* Fade=Cast<UMaterialExpressionPerInstanceCustomData>(UMaterialEditingLibrary::CreateMaterialExpression(Air,UMaterialExpressionPerInstanceCustomData::StaticClass())); Fade->DataIndex=0; Input(TEXT("Strength"),Fade);
  auto* Phase=Cast<UMaterialExpressionPerInstanceCustomData>(UMaterialEditingLibrary::CreateMaterialExpression(Air,UMaterialExpressionPerInstanceCustomData::StaticClass())); Phase->DataIndex=1; Input(TEXT("Phase"),Phase);
- Opacity->Code=TEXT("float edge=pow(saturate(1-abs(UV.y*2-1)),3); float pulse=.3+.7*pow(saturate(sin(Time*18-Phase*1.8)),3); return edge*pulse*Strength*.65;");
+ Opacity->Code=TEXT("float edge=pow(saturate(1-abs(UV.y*2-1)),1.4); float tips=saturate(UV.x*12)*saturate((1-UV.x)*7); float flow=.8+.2*sin(UV.x*12+Time*7); return edge*tips*flow*Strength*.45;");
  UMaterialEditingLibrary::ConnectMaterialProperty(Opacity,TEXT(""),MP_Opacity); UMaterialEditingLibrary::RecompileMaterial(Air);
  const bool Saved=Save(Air,AirPath);
  UE_LOG(LogCitix,Log,TEXT("[CitixRoadside] bush triangles=%d, faceted lobes=9; assets saved=%d"),Triangles,Saved);

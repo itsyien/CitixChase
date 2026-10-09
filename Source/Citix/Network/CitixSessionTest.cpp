@@ -54,11 +54,12 @@ bool FCitixRoomMetadataTest::RunTest(const FString& Parameters)
  Result.Session.SessionSettings.NumPublicConnections=2;
  Result.Session.SessionSettings.Set(FName(TEXT("CITIX_ROOM")),FString(TEXT("Yien's Room")),EOnlineDataAdvertisementType::ViaOnlineService);
  Result.Session.SessionSettings.Set(FName(TEXT("CITIX_PLAYERS")),1,EOnlineDataAdvertisementType::ViaOnlineService);
- Result.Session.SessionSettings.Set(FName(TEXT("CITIX_PROTOCOL")),1,EOnlineDataAdvertisementType::ViaOnlineService);
+ Result.Session.SessionSettings.Set(FName(TEXT("CITIX_PROTOCOL")),UCitixSessionSubsystem::ProtocolVersion,EOnlineDataAdvertisementType::ViaOnlineService);
  Result.Session.SessionSettings.Set(FName(TEXT("CITIX_NETWORK")),FString::Printf(TEXT("%u"),UCitixSessionSubsystem::NetworkVersion()),EOnlineDataAdvertisementType::ViaOnlineService);
  auto Room=UCitixSessionSubsystem::DescribeRoom(Result); TestEqual(TEXT("Room metadata carries host name"),Room.Name,FString(TEXT("Yien's Room"))); TestTrue(TEXT("One-driver compatible room is joinable"),Room.CanJoin());
  Result.Session.SessionSettings.Set(FName(TEXT("CITIX_PLAYERS")),2,EOnlineDataAdvertisementType::ViaOnlineService); Room=UCitixSessionSubsystem::DescribeRoom(Result); TestFalse(TEXT("Full room cannot be joined"),Room.CanJoin());
  Result.Session.SessionSettings.Set(FName(TEXT("CITIX_PLAYERS")),1,EOnlineDataAdvertisementType::ViaOnlineService); Result.Session.SessionSettings.Set(FName(TEXT("CITIX_PROTOCOL")),99,EOnlineDataAdvertisementType::ViaOnlineService); Room=UCitixSessionSubsystem::DescribeRoom(Result); TestFalse(TEXT("Different room protocol cannot be joined"),Room.CanJoin());
+ Result.Session.SessionSettings.Set(FName(TEXT("CITIX_PROTOCOL")),UCitixSessionSubsystem::ProtocolVersion-1,EOnlineDataAdvertisementType::ViaOnlineService); Room=UCitixSessionSubsystem::DescribeRoom(Result); TestFalse(TEXT("Previous gameplay protocol cannot be joined"),Room.CanJoin());
  TestTrue(TEXT("Concurrent third join rejected at admission"),UCitixSessionSubsystem::AdmissionError(TEXT(""),2,false).Contains(TEXT("full")));
  TestTrue(TEXT("Incompatible client rejected at admission"),UCitixSessionSubsystem::AdmissionError(TEXT("?CitixProtocol=99?CitixBuild=1"),1,false).Contains(TEXT("version")));
  TestTrue(TEXT("Match already started rejected at admission"),UCitixSessionSubsystem::AdmissionError(TEXT(""),1,true).Contains(TEXT("progress")));
@@ -129,6 +130,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCitixOnlineURLTest,"Citix.Online.TransportURL"
 bool FCitixOnlineURLTest::RunTest(const FString& Parameters)
 {
  const FString Address=TEXT("EOS:00026d2988b442018995aab726cb0d7e");
+ TestEqual(TEXT("Balance update rejects old replication layouts"),UCitixSessionSubsystem::ProtocolVersion,4);
  const FString Travel=FCitixEOSOnline::TravelAddress(Address);
  const FURL URL(nullptr,*(Travel+TEXT("?CitixProtocol=1")),TRAVEL_Absolute);
  TestTrue(TEXT("EOS travel URL is valid"),bool(URL.Valid));

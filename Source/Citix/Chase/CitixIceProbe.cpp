@@ -36,7 +36,7 @@ void CitixIceProbeTick(ACitixChaseGameMode* Mode)
  auto* Body=Cast<UPrimitiveComponent>(R->GetRootComponent()); const float Now=World->GetTimeSeconds();
  auto Finish=[&](const TCHAR* Why) {
   UE_LOG(LogCitix,Log,TEXT("[CitixIceProbe] %s %s"),Passed ? TEXT("PASS") : TEXT("FAIL"),Why);
-  const FString Receipt=FString::Printf(TEXT("{\"passed\":%s,\"immediate_speed_kmh\":%.2f,\"freeze_seconds\":3,\"recharge_seconds\":90,\"billboards\":%d,\"building_screens\":%d}"),Passed ? TEXT("true") : TEXT("false"),Limit*.036f,SignCount,ScreenCount);
+  const FString Receipt=FString::Printf(TEXT("{\"passed\":%s,\"immediate_speed_kmh\":%.2f,\"freeze_seconds\":5,\"recharge_seconds\":50,\"billboards\":%d,\"building_screens\":%d}"),Passed ? TEXT("true") : TEXT("false"),Limit*.036f,SignCount,ScreenCount);
   FFileHelper::SaveStringToFile(Receipt,*(FPaths::ProjectSavedDir()/TEXT("ChaseIceProbe.json"))); Step=99;
  };
  if (Step==0) {
@@ -71,23 +71,23 @@ void CitixIceProbeTick(ACitixChaseGameMode* Mode)
   const FVector Velocity=R->GetActorForwardVector()*(100.f/.036f); Body->SetPhysicsLinearVelocity(Velocity);
   Chaser->InputKey(FInputKeyEventArgs::CreateSimulated(EKeys::LeftMouseButton,IE_Pressed,1.f));
   Limit=Body->GetPhysicsLinearVelocity().Size2D(); Activated=Now;
-  Passed &= CP->IceCharges==0 && CP->bLastIceHit && FMath::IsNearlyEqual(Limit,70.f/.036f,2.f) && FMath::IsNearlyEqual(RP->FrozenUntil-Now,3.f,.02f);
+  Passed &= CP->IceCharges==0 && CP->bLastIceHit && FMath::IsNearlyEqual(Limit,70.f/.036f,2.f) && FMath::IsNearlyEqual(RP->FrozenUntil-Now,FCitixChaseRules::IceDuration,.02f);
   Mode->UseChaserIce(Chaser); Passed &= CP->IceCharges==0;
   UE_LOG(LogCitix,Log,TEXT("[CitixIceProbe] immediate cut %.2f km/h, signs=%d screens=%d passed=%d"),Limit*.036f,Signs,Screens,Passed);
   Step=1;
  } else if (Step==1) {
   R->ServerSendDriveInput(1,0,false,true);
-  if (Now-Activated>.2f && Now-Activated<2.9f) Passed &= R->GetVehicleMovement()->bIceFrozen && !R->GetVehicleMovement()->IsBoosting() && Body->GetPhysicsLinearVelocity().Size2D()<=Limit+10;
-  if (Now-Activated>3.2f) { Passed &= !R->GetVehicleMovement()->bIceFrozen; Step=2; }
+  if (Now-Activated>.2f && Now-Activated<FCitixChaseRules::IceDuration-.1f) Passed &= R->GetVehicleMovement()->bIceFrozen && !R->GetVehicleMovement()->IsBoosting() && Body->GetPhysicsLinearVelocity().Size2D()<=Limit+10;
+  if (Now-Activated>FCitixChaseRules::IceDuration+.2f) { Passed &= !R->GetVehicleMovement()->bIceFrozen; Step=2; }
  } else if (Step==2) {
   R->ServerSendDriveInput(1,0,false,true);
-  if (Now-Activated>4.1f) {
+  if (Now-Activated>FCitixChaseRules::IceDuration+1.1f) {
    Passed &= Body->GetPhysicsLinearVelocity().Size2D()>Limit+10 && R->GetVehicleMovement()->IsBoosting();
-   // Recharge arithmetic uses the real rule with simulated server times; no ninety-second sleep.
-   int32 Reserve=0;float Next=Activated+90;
-   FCitixChaseRules::RefillIce(Activated+89.9f,Reserve,Next); Passed &= Reserve==0;
-   FCitixChaseRules::RefillIce(Activated+90,Reserve,Next);Passed &= Reserve==1;
-   FCitixChaseRules::RefillIce(Activated+180,Reserve,Next);Passed &= Reserve==2 && Next==0;
+   // Recharge arithmetic uses the real rule with simulated server times; no fifty-second sleep.
+   int32 Reserve=0;float Next=Activated+50;
+   FCitixChaseRules::RefillIce(Activated+49.9f,Reserve,Next); Passed &= Reserve==0;
+   FCitixChaseRules::RefillIce(Activated+50,Reserve,Next);Passed &= Reserve==1;
+   FCitixChaseRules::RefillIce(Activated+100,Reserve,Next);Passed &= Reserve==2 && Next==0;
    CP->IceCharges=2;CP->NextIceAt=0;CP->ForceNetUpdate();
    Finish(TEXT("LMB, 30% cut, engine/boost lock, recovery, recharge, reserve cap and city advertisements"));
   }

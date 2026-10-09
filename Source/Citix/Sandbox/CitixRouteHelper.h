@@ -30,7 +30,7 @@ public:
 			for (int32 Index = 0; Index < Network.Nodes.Num(); ++Index)
 			{
 				const FVector2D& P = Network.Nodes[Index].Position;
-				const float DistanceSq = FVector2D::DistSquared(P, FVector2D(Location.X, Location.Y));
+				const float DistanceSq = FVector::DistSquared(FVector(P,Network.Nodes[Index].Elevation),Location);
 				if (DistanceSq < BestDistanceSq)
 				{
 					BestDistanceSq = DistanceSq;
@@ -87,7 +87,7 @@ public:
 				}
 				const FCitixRoadEdge& Edge = Network.Edges[EdgeIndex];
 				const int32 Other = (Edge.NodeA == Current) ? Edge.NodeB : Edge.NodeA;
-				const float Step = Network.EdgeLength(EdgeIndex);
+				const float Step = FVector::Distance(Network.EdgePoint3D(EdgeIndex,0),Network.EdgePoint3D(EdgeIndex,1));
 				if (Cost[Current] + Step < Cost[Other])
 				{
 					Cost[Other] = Cost[Current] + Step;
@@ -117,14 +117,15 @@ public:
  static void BuildRoutePoints(const FCitixRoadNetwork& Network, const FVector& From, const FVector& To, TArray<FVector>& OutPoints)
  {
   OutPoints.Reset();
+  if(From.ContainsNaN() || To.ContainsNaN()) return;
+  auto NodePoint=[&](int32 Node){return FVector(Network.Nodes[Node].Position,Network.Nodes[Node].Elevation+60.f);};
   auto Project=[&](const FVector& P,FVector& OnRoad) {
    int Best=INDEX_NONE; float Cost=FLT_MAX;
    for (int I=0; I<Network.Edges.Num(); ++I) {
-    const FCitixRoadEdge& E=Network.Edges[I]; if (!E.bDrivable) continue;
-    const FVector A(Network.Nodes[E.NodeA].Position,60),B(Network.Nodes[E.NodeB].Position,60);
-    const FVector AB=B-A;
-    const float T=FMath::Clamp(FVector::DotProduct(FVector(P.X,P.Y,60)-A,AB)/FMath::Max(1.f,AB.SizeSquared()),0.f,1.f);
-    const FVector Q=A+AB*T; const float D=FVector::DistSquared2D(P,Q);
+    const FCitixRoadEdge& E=Network.Edges[I]; if (!E.bDrivable || !Network.IsValidNode(E.NodeA) || !Network.IsValidNode(E.NodeB)) continue;
+    const FVector2D A=Network.Nodes[E.NodeA].Position,AB=Network.Nodes[E.NodeB].Position-A;
+    const float T=FMath::Clamp(FVector2D::DotProduct(FVector2D(P)-A,AB)/FMath::Max(1.,AB.SizeSquared()),0.,1.);
+    const FVector Q=Network.EdgePoint3D(I,T)+FVector(0,0,60); const float D=FVector::DistSquared(P,Q);
     if (D<Cost) { Cost=D; Best=I; OnRoad=Q; }
    } return Best;
   };
@@ -135,13 +136,13 @@ public:
   float Best=FLT_MAX; TArray<int32> BestPath;
   for (int Begin : {First.NodeA,First.NodeB}) for (int Finish : {Last.NodeA,Last.NodeB}) {
    TArray<int32> Path;
-   if (!FindRouteNodes(Network,FVector(Network.Nodes[Begin].Position,60),FVector(Network.Nodes[Finish].Position,60),Path)) continue;
-   float Length=FVector::Dist2D(Start,FVector(Network.Nodes[Begin].Position,60))+FVector::Dist2D(End,FVector(Network.Nodes[Finish].Position,60));
-   for (int I=1; I<Path.Num(); ++I) Length+=FVector2D::Distance(Network.Nodes[Path[I-1]].Position,Network.Nodes[Path[I]].Position);
+   if (!FindRouteNodes(Network,NodePoint(Begin),NodePoint(Finish),Path)) continue;
+   float Length=FVector::Distance(Start,NodePoint(Begin))+FVector::Distance(End,NodePoint(Finish));
+   for (int I=1; I<Path.Num(); ++I) Length+=FVector::Distance(NodePoint(Path[I-1]),NodePoint(Path[I]));
    if (Length<Best) { Best=Length; BestPath=MoveTemp(Path); }
   }
   if (BestPath.IsEmpty()) return;
-  OutPoints.Add(Start); for (int Node:BestPath) OutPoints.Add(FVector(Network.Nodes[Node].Position,60));
+  OutPoints.Add(Start); for (int Node:BestPath) OutPoints.Add(NodePoint(Node));
   OutPoints.Add(End); OutPoints.Add(To);
  }
 };

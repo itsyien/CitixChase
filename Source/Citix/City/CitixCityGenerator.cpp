@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "City/CitixCityGenerator.h"
+#include "City/CitixHillsideBuilder.h"
+#include "City/CitixHillsideLayout.h"
 
 #include "City/CitixYienBillboard.h"
 #include "City/CitixCityBuilder.h"
@@ -274,6 +276,11 @@ void ACitixCityGenerator::DestroyGeneratedActors()
 		Preview->Destroy();
 		Preview = nullptr;
 	}
+	if (HillsideBuilder)
+	{
+		HillsideBuilder->Destroy();
+		HillsideBuilder = nullptr;
+	}
 	if (TrafficSystem)
 	{
 		TrafficSystem->Destroy();
@@ -357,6 +364,11 @@ ECitixDistrict ACitixCityGenerator::GetDistrictType(int32 DistrictIndex) const
 
 FTransform ACitixCityGenerator::GetPlayerSpawnTransform() const
 {
+	if (bHillsideMap)
+	{
+		const auto Layout=FCitixHillsideLayout::Build();
+		return FTransform(FRotator(0,45,0),Layout.Spawns[0]+FVector(0,0,110));
+	}
 	const FVector2D Centre = (Plan.BoundsMin + Plan.BoundsMax) * 0.5f;
 
 	// Start mid-street on a major road, clear of the river, so the player begins on the
@@ -611,6 +623,25 @@ void ACitixCityGenerator::GenerateCity()
 	const UCitixCitySettings& Settings = UCitixCitySettings::Get();
 	const double StartTime = FPlatformTime::Seconds();
 	ResolvedSeed = (SeedOverride >= 0) ? SeedOverride : Settings.Seed;
+	if (bHillsideMap)
+	{
+		const auto Layout=FCitixHillsideLayout::Build();
+		Plan=FCitixCityPlan(); Plan.BoundsMin=FVector2D(-40000,-30000); Plan.BoundsMax=FVector2D(40000,38000);
+		RoadNetwork=Layout.BuildRoadNetwork(); Plan.Report.RoadCount=RoadNetwork.Edges.Num();
+		FActorSpawnParameters Params; Params.Owner=this;
+		Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		HillsideBuilder=GetWorld()->SpawnActor<ACitixHillsideBuilder>(ACitixHillsideBuilder::StaticClass(),FTransform::Identity,Params);
+		if (!HillsideBuilder) return;
+		HillsideBuilder->Build(Layout);
+		LampLocations=HillsideBuilder->GetLampLocations();
+		LandmarkLocations=HillsideBuilder->GetLandmarkLocations();
+		Rng.Initialize(ResolvedSeed+7717);
+		bGenerated=true;
+		GenerationSummary=FString::Printf(TEXT("Hillside Switchback / %d roads / 59 m elevation"),RoadNetwork.Edges.Num());
+		SpawnTraffic(); SpawnStreetLights(); SetRoadGraphDebug(RoadGraphDebug);
+		if (bLogStats) UE_LOG(LogCitix,Log,TEXT("[CitixHillside] Generated revision %d seed %d: %d nodes, %d edges"),Layout.Revision,ResolvedSeed,RoadNetwork.Nodes.Num(),RoadNetwork.Edges.Num());
+		return;
+	}
 
 	// =====================================================================
 	// PHASE 1 - the macro plan, and the routable graph built from it.
@@ -687,11 +718,37 @@ void ACitixCityGenerator::GenerateCity()
 bool ACitixCityGenerator::IsDryFootprint(const FVector& P, const FVector2D& Half, float Yaw) const
 {
  if (!bGenerated || P.ContainsNaN()) return false;
+ if (bHillsideMap)
+ {
+  const FRotator Rotation(0,Yaw,0);
+  for(const FVector2D Offset:{FVector2D::ZeroVector,FVector2D(Half.X,Half.Y),FVector2D(Half.X,-Half.Y),FVector2D(-Half.X,Half.Y),FVector2D(-Half.X,-Half.Y)})
+  {
+   const FVector Corner=P+Rotation.RotateVector(FVector(Offset,0));
+   if(Corner.X<-40000 || Corner.X>40000 || Corner.Y<-27500 || Corner.Y>38000) return false;
+  }
+  return true;
+ }
+ // Layout bounds describe streets, not the edge of the drivable ground. The
+ // visible slab includes GroundMargin; rejecting that apron made surface
+ // recovery behave like an invisible wall before the actual terrain edge.
+ FVector2D GroundMin,GroundMax;
+ if(GroundMeshComponent) {
+  const FBoxSphereBounds& Bounds=GroundMeshComponent->Bounds;
+  GroundMin=FVector2D(Bounds.Origin-Bounds.BoxExtent);
+  GroundMax=FVector2D(Bounds.Origin+Bounds.BoxExtent);
+ } else {
+  // Planning-only generation has no components. Mirror CreateGroundPlane's
+  // minimum slab size so its geometry classification stays deterministic.
+  const FVector2D Center=(Plan.BoundsMin+Plan.BoundsMax)*.5f;
+  FVector2D Extent=(Plan.BoundsMax-Plan.BoundsMin)*.5f+FVector2D(UCitixCitySettings::Get().GroundMargin);
+  Extent.X=FMath::Max(50.,Extent.X); Extent.Y=FMath::Max(50.,Extent.Y);
+  GroundMin=Center-Extent; GroundMax=Center+Extent;
+ }
  const FRotator Rotation(0,Yaw,0);
  for (const FVector2D Offset : {FVector2D::ZeroVector, FVector2D(Half.X,Half.Y), FVector2D(Half.X,-Half.Y), FVector2D(-Half.X,Half.Y), FVector2D(-Half.X,-Half.Y)}) {
   const FVector Corner = P + Rotation.RotateVector(FVector(Offset,0));
   const FVector2D Point(Corner.X,Corner.Y);
-  if (Point.X < Plan.BoundsMin.X || Point.Y < Plan.BoundsMin.Y || Point.X > Plan.BoundsMax.X || Point.Y > Plan.BoundsMax.Y) return false;
+  if (Point.X < GroundMin.X || Point.Y < GroundMin.Y || Point.X > GroundMax.X || Point.Y > GroundMax.Y) return false;
   bool Water = false;
   for (int32 I=1; I<Plan.RiverPoints.Num(); ++I) {
    const FVector2D A=Plan.RiverPoints[I-1], B=Plan.RiverPoints[I], AB=B-A;
@@ -720,9 +777,11 @@ bool ACitixCityGenerator::ValidateChaseSurface(UWorld* World, const FVector& P, 
  if (AdditionalIgnore) Params.AddIgnoredActor(AdditionalIgnore);
  FHitResult Ground;
  if (!World->LineTraceSingleByObjectType(Ground,P+FVector(0,0,300),P-FVector(0,0,1500),FCollisionObjectQueryParams(ECC_WorldStatic),Params) || Ground.ImpactNormal.Z < .75f) return false;
- const FVector Centre=Ground.ImpactPoint+FVector(0,0,Half.Z+5.f);
+ const FVector Centre=Ground.ImpactPoint+FVector(0,0,(Half.Z+5.f)/Ground.ImpactNormal.Z);
+ const FVector Forward=FVector::VectorPlaneProject(FRotator(0,Yaw,0).Vector(),Ground.ImpactNormal).GetSafeNormal();
+ const FQuat Rotation=FRotationMatrix::MakeFromXZ(Forward,Ground.ImpactNormal).ToQuat();
  FHitResult Blocker;
- if (Clearance && World->SweepSingleByChannel(Blocker,Centre,Centre,FRotator(0,Yaw,0).Quaternion(),ECC_WorldStatic,FCollisionShape::MakeBox(Half),Params)) return false;
- Out=FTransform(FRotator(0,Yaw,0),Centre);
+ if (Clearance && World->SweepSingleByChannel(Blocker,Centre,Centre,Rotation,ECC_WorldStatic,FCollisionShape::MakeBox(Half),Params)) return false;
+ Out=FTransform(Rotation,Centre);
  return true;
 }

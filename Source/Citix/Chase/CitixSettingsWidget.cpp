@@ -29,7 +29,7 @@ TSharedRef<SWidget> UCitixSettingsWidget::RebuildWidget()
  // Fit the entire card inside the viewport, including small windows and UI DPI scaling.
  auto* Fit=WidgetTree->ConstructWidget<UScaleBox>(); Fit->SetStretch(EStretch::ScaleToFit); Fit->SetStretchDirection(EStretchDirection::DownOnly);
  auto* FitSlot=Root->AddChildToCanvas(Fit); FitSlot->SetAnchors(FAnchors(0,0,1,1)); FitSlot->SetOffsets(FMargin(24));
- auto* Bounds=WidgetTree->ConstructWidget<USizeBox>(); Bounds->SetWidthOverride(620); Bounds->SetHeightOverride(690); Fit->AddChild(Bounds);
+ auto* Bounds=WidgetTree->ConstructWidget<USizeBox>(); Bounds->SetWidthOverride(620); Bounds->SetHeightOverride(790); Fit->AddChild(Bounds);
  auto* Card=WidgetTree->ConstructWidget<UBorder>(); Card->SetBrushColor(FLinearColor(.018f,.035f,.065f,.98f)); Card->SetPadding(FMargin(28,24)); Bounds->AddChild(Card);
  auto* Scroll=WidgetTree->ConstructWidget<UScrollBox>(); Scroll->SetScrollBarVisibility(ESlateVisibility::Collapsed); Card->SetContent(Scroll);
  auto* Panel=WidgetTree->ConstructWidget<UVerticalBox>(); Scroll->AddChild(Panel);
@@ -43,7 +43,7 @@ TSharedRef<SWidget> UCitixSettingsWidget::RebuildWidget()
   auto* T=Text(Value,Size,Color); T->SetAutoWrapText(true); Panel->AddChildToVerticalBox(T)->SetPadding(FMargin(0,0,0,Bottom)); return T;
  };
  Label(TEXT("CITIXCHASE  /  SETTINGS"),12,Blue,8);
- Label(TEXT("YOUR PERFORMANCE"),28,FLinearColor::White,10);
+ Label(TEXT("AUDIO & PERFORMANCE"),28,FLinearColor::White,10);
  Status=Label(TEXT("Detecting hardware..."),14,Blue,16);
  auto Button=[&](const FString& Value) {
   auto* B=WidgetTree->ConstructWidget<UButton>();
@@ -82,6 +82,11 @@ TSharedRef<SWidget> UCitixSettingsWidget::RebuildWidget()
  for(int32 I=0;I<6;++I) { auto* T=Text(Caps[I],11,Dim); auto* TrackSlot=FPSMarks->AddChildToCanvas(T); TrackSlot->SetAnchors(FAnchors(I/5.f,0)); TrackSlot->SetAlignment(FVector2D(I==0 ? 0.f : I==5 ? 1.f : .5f,0)); TrackSlot->SetAutoSize(true); }
  AutoButton=Button(TEXT("USE AUTOMATIC")); Panel->AddChildToVerticalBox(AutoButton)->SetPadding(FMargin(0,0,0,8)); AutoButton->OnClicked.AddDynamic(this,&UCitixSettingsWidget::Auto);
  Label(TEXT("Restores recommended detail and resolution. Keeps your FPS limit."),11,Dim,14);
+ Label(TEXT("AUDIO"),12,Dim,6);
+ UTextBlock* AudioText=nullptr; VolumeSlider=Control(TEXT("MASTER VOLUME"),AudioText); VolumeValue=AudioText;
+ VolumeSlider->SetMinValue(0); VolumeSlider->SetMaxValue(100); VolumeSlider->SetStepSize(1); VolumeSlider->OnValueChanged.AddDynamic(this,&UCitixSettingsWidget::VolumeChanged);
+ VolumeSlider->SetToolTipText(FText::FromString(TEXT("Changes all game audio immediately. 0% mutes. Arrow keys adjust by 1%. Saved on this PC.")));
+ Label(TEXT("0% mutes all game audio. Applies immediately."),11,Dim,16);
  auto* BackButton=Button(TEXT("RESUME  /  ESC")); Panel->AddChildToVerticalBox(BackButton)->SetPadding(FMargin(0,0,0,12)); BackButton->OnClicked.AddDynamic(this,&UCitixSettingsWidget::Resume);
  Label(TEXT("Saved on this PC. Multiplayer continues while settings are open."),11,Dim,0);
  Refresh(); return Super::RebuildWidget();
@@ -98,6 +103,8 @@ void UCitixSettingsWidget::Refresh()
  ResolutionSlider->SetValue(S->EffectiveResolutionScale()); FPSSlider->SetValue(S->FPSDetent());
  ResolutionValue->SetText(FText::FromString(FString::Printf(TEXT("%.0f%%%s"),S->EffectiveResolutionScale(),S->ManualResolutionScale<0.f ? TEXT("  · AUTO") : TEXT(""))));
  FPSValue->SetText(FText::FromString(S->GetFrameRateLimit()<=0.f ? TEXT("Unlimited") : FString::Printf(TEXT("%.0f FPS"),S->GetFrameRateLimit())));
+ VolumeSlider->SetValue(S->GetMasterVolumePercent());
+ VolumeValue->SetText(FText::FromString(S->GetMasterVolumePercent()==0.f ? TEXT("0%  · MUTED") : FString::Printf(TEXT("%.0f%%"),S->GetMasterVolumePercent())));
  auto Selected=[](UButton* Button,bool Active) { FButtonStyle Style=Button->GetStyle(); Style.SetNormal(FSlateColorBrush(Active ? FLinearColor(.06f,.35f,.5f) : FLinearColor(.05f,.14f,.22f))); Button->SetStyle(Style); };
  for(int I=0;I<Presets.Num();++I) Selected(Presets[I],S->EffectivePreset()==I);
  Selected(AutoButton,S->IsAutomatic() && S->ManualResolutionScale<0.f);
@@ -106,6 +113,7 @@ void UCitixSettingsWidget::BeginInteraction(){bCapturing=true;}
 void UCitixSettingsWidget::EndInteraction(){bCapturing=false; bKeyboardInteraction=false; if(bDirty) {if(auto* S=UCitixGraphicsSettings::Get()) S->SaveSettings(); bDirty=false;}}
 void UCitixSettingsWidget::ResolutionChanged(float Value){if(bRefreshing) return; if(auto* S=UCitixGraphicsSettings::Get()) S->SetResolutionScaleValueEx(Value); bDirty=true; Refresh(); if(!bCapturing) EndInteraction();}
 void UCitixSettingsWidget::FPSChanged(float Value){if(bRefreshing) return; if(auto* S=UCitixGraphicsSettings::Get()) S->SetFPSDetent(FMath::RoundToInt(Value)); bDirty=true; Refresh(); if(!bCapturing) EndInteraction();}
+void UCitixSettingsWidget::VolumeChanged(float Value){if(bRefreshing) return; if(auto* S=UCitixGraphicsSettings::Get()) S->SetMasterVolumePercent(Value,GetWorld()); bDirty=true; Refresh(); if(!bCapturing) EndInteraction();}
 void UCitixSettingsWidget::Low(){if(auto* S=UCitixGraphicsSettings::Get()) S->SelectPreset(0); Refresh();}
 bool UCitixSettingsWidget::VerifyPresetClick(int32 Level)
 {
@@ -162,7 +170,7 @@ FReply UCitixSettingsWidget::NativeOnPreviewKeyDown(const FGeometry& G,const FKe
  if(E.GetKey()==EKeys::Escape){Resume(); return FReply::Handled();}
  const FKey Key=E.GetKey();
  const bool Adjusting=Key==EKeys::Left || Key==EKeys::Right || Key==EKeys::Gamepad_DPad_Left || Key==EKeys::Gamepad_DPad_Right;
- if(Adjusting && ((ResolutionSlider && ResolutionSlider->HasKeyboardFocus()) || (FPSSlider && FPSSlider->HasKeyboardFocus()))) {bKeyboardInteraction=true; bCapturing=true;}
+ if(Adjusting && ((ResolutionSlider && ResolutionSlider->HasKeyboardFocus()) || (FPSSlider && FPSSlider->HasKeyboardFocus()) || (VolumeSlider && VolumeSlider->HasKeyboardFocus()))) {bKeyboardInteraction=true; bCapturing=true;}
  else if(bKeyboardInteraction) EndInteraction();
  return Super::NativeOnPreviewKeyDown(G,E);
 }

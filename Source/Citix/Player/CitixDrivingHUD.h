@@ -102,6 +102,13 @@ public:
 private:
 	UPROPERTY() TObjectPtr<UFont> ChaseFont;
 	float ChaseUIScale = 1.f;
+ void DrawRunnerTracker(APawn* Target,float W,float H);
+ bool DrawRunnerESP(APawn* Target,float W,float H);
+ void DrawPlayerCarLabels(float W,float H);
+ TWeakObjectPtr<class ACitixGroundTracker> GroundTracker;
+ bool bTrackerInitialized=false;
+ TArray<FVector2D> MarkerLabelPositions;
+
 	void DrawChaseText(const FString& Text, FLinearColor Colour, float X, float Y, UFont* Font, float Scale);
 	void DrawChaseRect(FLinearColor Colour, float X, float Y, float Width, float Height);
 	void DrawChaseLine(float X1, float Y1, float X2, float Y2, FLinearColor Colour, float Thickness);

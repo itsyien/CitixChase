@@ -10,6 +10,10 @@ ACitixTrafficVehicle::ACitixTrafficVehicle()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	SetCanBeDamaged(false);
+ // Initial false replication values need not trigger a RepNotify. Match the
+ // actual actor state before any appearance builds a blocking body at origin.
+ SetActorHiddenInGame(true);
+ SetActorEnableCollision(false);
 
 	// Multiplayer stage 1: server drives, everyone interpolates. Cull far
 	// copies so distant traffic costs no bandwidth.
@@ -42,7 +46,6 @@ void ACitixTrafficVehicle::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
  DOREPLIFETIME(ACitixTrafficVehicle, CarType);
 	DOREPLIFETIME(ACitixTrafficVehicle, PaintColor);
 	DOREPLIFETIME(ACitixTrafficVehicle, BuildSeed);
-	DOREPLIFETIME(ACitixTrafficVehicle, bVisibleNet);
 }
 
 void ACitixTrafficVehicle::InitializeVehicle(ECitixCarType InType, const FLinearColor& Color, int32 Seed)
@@ -59,6 +62,8 @@ void ACitixTrafficVehicle::InitializeVehicle(ECitixCarType InType, const FLinear
 	// Scene root is on the ground; the car library works in ground-space too.
 	CarVisual = FCitixCarLibrary::BuildCar(this, SceneRoot, CarType, Color,
 		/*bCollision*/ true, /*bIncludeWheels*/ true, /*bHighDetail*/ false);
+ SetActorHiddenInGame(!bVisibleNet);
+ SetActorEnableCollision(bVisibleNet);
 }
 
 void ACitixTrafficVehicle::OnRep_Appearance()
@@ -73,17 +78,22 @@ void ACitixTrafficVehicle::OnRep_Appearance()
 
 void ACitixTrafficVehicle::SetVehicleVisible(bool bVisible)
 {
-	if (bVisibleNet != bVisible) { ++Motion.Generation; History.Reset(); }
+ const bool bChanged=bVisibleNet != bVisible;
+ if (bChanged) { ++Motion.Generation; History.Reset(); }
  bVisibleNet = bVisible;
+ Motion.bVisible=bVisible;
 	SetActorHiddenInGame(!bVisible);
 	SetActorEnableCollision(bVisible);
+ if(bChanged && HasAuthority()) {
+  PublishMotion(0.f);
+  ForceNetUpdate();
+ }
 }
 
 void ACitixTrafficVehicle::OnRep_Visible()
 {
 	SetActorHiddenInGame(!bVisibleNet);
  SetActorEnableCollision(bVisibleNet);
- History.Reset(); if (bVisibleNet) OnRep_Motion();
 }
 
 void ACitixTrafficVehicle::SetWheelsVisible(bool bVisible)
@@ -104,10 +114,21 @@ void ACitixTrafficVehicle::PublishMotion(float SpeedKmh)
 }
 void ACitixTrafficVehicle::OnRep_Motion()
 {
+ const bool bVisibilityChanged=bVisibleNet != Motion.bVisible;
+ if(bVisibilityChanged) History.Reset();
+ bVisibleNet=Motion.bVisible;
+ if(!bVisibleNet) {
+  History.Reset();
+  OnRep_Visible();
+  return;
+ }
  if (!History.IsEmpty() && (History.Last().Generation != Motion.Generation || FVector::DistSquared(History.Last().Location,Motion.Location)>FMath::Square(2000.f))) History.Reset();
+ // Snap a new pool lifecycle before enabling its collider. Interpolating from
+ // the previous lifecycle creates a car/blocker travelling across open roads.
  if (History.IsEmpty()) SetActorLocationAndRotation(Motion.Location,Motion.Rotation);
  if (History.IsEmpty() || Motion.Timestamp>History.Last().Timestamp) History.Add(Motion);
  if (History.Num()>12) History.RemoveAt(0);
+ OnRep_Visible();
 }
 FCitixTrafficSnapshot ACitixTrafficVehicle::SampleMotion(const TArray<FCitixTrafficSnapshot>& Samples,float Time)
 {

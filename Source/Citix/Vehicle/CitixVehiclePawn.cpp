@@ -110,38 +110,6 @@ ACitixVehiclePawn::ACitixVehiclePawn()
 	ChaseCamera->bUsePawnControlRotation = false;
 	ChaseCamera->FieldOfView = 82.f;
 
-	ChaseTrackerRoot = CreateDefaultSubobject<USceneComponent>(TEXT("ChaseTrackerRoot"));
-	ChaseTrackerRoot->SetupAttachment(BodyCollision);
-	ChaseTrackerRoot->SetRelativeLocation(FVector(0.f, 0.f, 150.f));
-	for (int32 Index = 0; Index < 8; ++Index)
-	{
-		UStaticMeshComponent* Segment = CreateDefaultSubobject<UStaticMeshComponent>(*FString::Printf(TEXT("ChaseTrackerRing%d"), Index));
-		Segment->SetupAttachment(ChaseTrackerRoot);
-		Segment->SetStaticMesh(FCitixSurfaceLibrary::GetMesh(ECitixSurface::FacadeConcrete));
-		Segment->SetMaterial(0, FCitixSurfaceLibrary::GetMaterial(ECitixSurface::EmissiveCool));
-		const float Angle = Index * 45.f;
-		const float Radians = FMath::DegreesToRadians(Angle);
-		Segment->SetRelativeLocation(FVector(FMath::Cos(Radians) * 250.f, FMath::Sin(Radians) * 250.f, 0.f));
-		Segment->SetRelativeRotation(FRotator(0.f, Angle + 90.f, 0.f));
-		Segment->SetRelativeScale3D(FVector(0.75f, 0.10f, 0.08f));
-		Segment->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		Segment->SetCastShadow(false);
-		Segment->SetCanEverAffectNavigation(false);
-		Segment->SetVisibility(false, true);
-		ChaseTrackerSegments.Add(Segment);
-	}
-	ChaseTrackerArrow = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ChaseTrackerArrow"));
-	ChaseTrackerArrow->SetupAttachment(ChaseTrackerRoot);
-	ChaseTrackerArrow->SetStaticMesh(FCitixSurfaceLibrary::GetMesh(ECitixSurface::Spire));
-	ChaseTrackerArrow->SetMaterial(0, FCitixSurfaceLibrary::GetMaterial(ECitixSurface::EmissiveCool));
-	ChaseTrackerArrow->SetRelativeLocation(FVector(250.f, 0.f, 0.f));
-	ChaseTrackerArrow->SetRelativeRotation(FRotator(-90.f, 0.f, 0.f));
-	ChaseTrackerArrow->SetRelativeScale3D(FVector(0.32f, 0.32f, 0.65f));
-	ChaseTrackerArrow->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	ChaseTrackerArrow->SetCastShadow(false);
-	ChaseTrackerArrow->SetCanEverAffectNavigation(false);
-	ChaseTrackerArrow->SetVisibility(false, true);
-
 	VehicleMovement = CreateDefaultSubobject<UCitixVehicleMovementComponent>(TEXT("VehicleMovement"));
 	DriftSmoke = CreateDefaultSubobject<UCitixDriftSmokeComponent>(TEXT("DriftSmoke"));
 	BoostTrail = CreateDefaultSubobject<UCitixBoostTrailComponent>(TEXT("BoostTrail"));
@@ -625,7 +593,6 @@ void ACitixVehiclePawn::Tick(float DeltaSeconds)
 			VehicleMovement->SetBoostInput(bNetBoost);
 		}
 	}
-	UpdateChaseTracker();
 
 	if (CrashDamageCooldown > 0.f)
 	{
@@ -751,6 +718,7 @@ void ACitixVehiclePawn::Tick(float DeltaSeconds)
 
 	const float VehicleYaw = BodyCollision ? BodyCollision->GetComponentRotation().Yaw : 0.f;
 	CameraBoom->SetWorldRotation(FRotator(BaseCameraPitch, VehicleYaw + LookYawOffset, 0.f));
+ if (bHoodCamera && ChaseCamera) ChaseCamera->SetRelativeRotation(FRotator(-2.f,LookYawOffset,0));
 
 	// --- Speed effect: the chase camera pulls back and widens its FOV as the car goes
 	// faster, so speed reads on screen. Hood camera is untouched (moving it would clip
@@ -875,44 +843,6 @@ void ACitixVehiclePawn::Tick(float DeltaSeconds)
 	}
 }
 
-void ACitixVehiclePawn::UpdateChaseTracker()
-{
-	bool bShowTracker = false;
-	APawn* RunnerPawn = nullptr;
-	if (APlayerController* LocalController = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
-	{
-		if (LocalController->PlayerState == GetPlayerState<ACitixChasePlayerState>())
-		{
-			if (const ACitixChasePlayerState* LocalState = LocalController->GetPlayerState<ACitixChasePlayerState>(); LocalState && LocalState->ChaseRole == ECitixChaseRole::Chaser)
-			{
-				if (const ACitixChaseGameState* State = GetWorld() ? GetWorld()->GetGameState<ACitixChaseGameState>() : nullptr; State && State->bRunnerRevealed)
-				{
-					for (TActorIterator<APawn> It(GetWorld()); It; ++It)
-					{
-						if (const ACitixChasePlayerState* PawnState = It->GetPlayerState<ACitixChasePlayerState>(); PawnState && PawnState->ChaseRole == ECitixChaseRole::Runner)
-						{
-							RunnerPawn = *It;
-							break;
-						}
-					}
-					bShowTracker = RunnerPawn != nullptr;
-				}
-			}
-		}
-	}
-	for (UStaticMeshComponent* Segment : ChaseTrackerSegments)
-	{
-		if (Segment) Segment->SetVisibility(bShowTracker, true);
-	}
-	if (ChaseTrackerArrow) ChaseTrackerArrow->SetVisibility(bShowTracker, true);
-	if (bShowTracker && ChaseTrackerRoot)
-	{
-		FVector Direction = RunnerPawn->GetActorLocation() - GetActorLocation();
-		Direction.Z = 0.f;
-		if (!Direction.IsNearlyZero()) ChaseTrackerRoot->SetWorldRotation(Direction.Rotation());
-	}
-}
-
 void ACitixVehiclePawn::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -953,11 +883,28 @@ void ACitixVehiclePawn::InterpolateRemoteMovement(float DeltaSeconds)
 		}
 		else
 		{
-			// ponytail: velocity reconciliation without full input replay; upgrade to
-			// timestamped replay if measured high-latency correction remains visible.
-			const FVector Velocity = BodyCollision->GetPhysicsLinearVelocity();
-			BodyCollision->SetPhysicsLinearVelocity(FCitixChaseRules::LimitVelocity(FMath::VInterpTo(Velocity, Newest.Velocity + Error * 2.f, DeltaSeconds, 2.f),VehicleMovement->AbsoluteSpeedLimit));
-			SetActorRotation(FMath::RInterpTo(GetActorRotation(), Newest.Rotation, DeltaSeconds, 2.f), ETeleportType::TeleportPhysics);
+   // Reconcile in heading-relative coordinates: stale server yaw must not
+   // rotate the chassis independently of its momentum or turn position error into tyre slip.
+   const float OldYaw=GetActorRotation().Yaw;
+   const FRotator Corrected=FMath::RInterpTo(GetActorRotation(),Newest.Rotation,DeltaSeconds,2.f);
+   const FVector LocalVelocity=BodyCollision->GetPhysicsLinearVelocity().RotateAngleAxis(FMath::FindDeltaAngleDegrees(OldYaw,Corrected.Yaw),FVector::UpVector);
+   const FVector ServerVelocity=Newest.Velocity.RotateAngleAxis(FMath::FindDeltaAngleDegrees(Newest.Rotation.Yaw,Corrected.Yaw),FVector::UpVector);
+   const FVector Velocity=FCitixChaseRules::LimitVelocity(FMath::VInterpTo(LocalVelocity,ServerVelocity,DeltaSeconds,2.f),VehicleMovement->AbsoluteSpeedLimit);
+   // Correct positional divergence independently and sweep so small corrections cannot pass through walls.
+   const FVector Correction=(Error*FMath::Clamp(DeltaSeconds*2.f,0.f,1.f)).GetClampedToMaxSize(200.f*DeltaSeconds);
+   SetActorLocationAndRotation(GetActorLocation()+Correction,Corrected,true,nullptr,ETeleportType::TeleportPhysics);
+   BodyCollision->SetPhysicsLinearVelocity(Velocity);
+   if(FParse::Param(FCommandLine::Get(),TEXT("CitixOwnerCorrectionProbe"))) {
+    static int32 Samples=0;static float MaxSideError=0;static float PeakSpeed=0;static bool Written=false;
+    const FVector Right=Corrected.RotateVector(FVector::RightVector);
+    const float Expected=FMath::Lerp(FVector::DotProduct(LocalVelocity,Right),FVector::DotProduct(ServerVelocity,Right),FMath::Clamp(DeltaSeconds*2.f,0.f,1.f));
+    if(Velocity.Size2D()<VehicleMovement->AbsoluteSpeedLimit-1) MaxSideError=FMath::Max(MaxSideError,FMath::Abs(static_cast<float>(FVector::DotProduct(Velocity,Right))-Expected));
+    PeakSpeed=FMath::Max(PeakSpeed,static_cast<float>(Velocity.Size2D()));++Samples;
+    if(!Written && Samples>=300 && PeakSpeed>500.f && !HasAuthority()) {
+     const FString Receipt=FString::Printf(TEXT("{\"passed\":%s,\"joined_owner\":true,\"correction_samples\":%d,\"max_added_sideways_cm_s\":%.5f,\"peak_speed_kmh\":%.2f}"),MaxSideError<.1f ? TEXT("true") : TEXT("false"),Samples,MaxSideError,PeakSpeed*.036f);
+     FFileHelper::SaveStringToFile(Receipt,*(FPaths::ProjectSavedDir()/TEXT("OwnerCorrectionProbe.json")));Written=true;
+    }
+   }
 		}
 		return;
 	}
@@ -1864,11 +1811,23 @@ void ACitixVehiclePawn::ApplyCameraMode()
 	}
 	if (bHoodCamera)
 	{
-		CameraBoom->TargetArmLength = HoodArmLength;
-		CameraBoom->SocketOffset = HoodSocketOffset;
+  // The windscreen view belongs to the chassis, never the lagging chase arm.
+  FVector Window(95.f,0.f,92.f);
+  TArray<FCitixCarPartDesc> Parts; FCitixCarLibrary::BuildPartDescs(CarType,Parts);
+  float FrontGlass=-MAX_flt;
+  for (const auto& Part:Parts) if (Part.Surface==ECitixSurface::CarGlass && Part.Center.X>FrontGlass) {
+   FrontGlass=Part.Center.X; Window=Part.Center+FVector(Part.Size.X*.5f+12.f,0,0);
+  }
+  if (CarVisualRoot) Window+=CarVisualRoot->GetRelativeLocation();
+  ChaseCamera->AttachToComponent(BodyCollision,FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+  ChaseCamera->SetRelativeLocation(Window);
+  ChaseCamera->SetRelativeRotation(FRotator(-2.f,LookYawOffset,0));
+  ChaseCamera->SetFieldOfView(ChaseBaseFov);
 	}
 	else
 	{
+  ChaseCamera->AttachToComponent(CameraBoom,FAttachmentTransformRules::SnapToTargetNotIncludingScale,USpringArmComponent::SocketName);
+  ChaseCamera->SetRelativeLocation(FVector::ZeroVector); ChaseCamera->SetRelativeRotation(FRotator::ZeroRotator);
 		CameraBoom->TargetArmLength = ChaseArmLength;
 		CameraBoom->SocketOffset = ChaseSocketOffset;
 	}

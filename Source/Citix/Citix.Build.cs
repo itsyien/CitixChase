@@ -35,11 +35,13 @@ public class Citix : ModuleRules
 
 		PublicDependencyModuleNames.AddRange(new string[] { "EOSShared", "SocketSubsystemEOS" });
 		PrivateDependencyModuleNames.AddRange(new string[] { "EOSSDK" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "MeshDescription", "StaticMeshDescription" });
+		PrivateDependencyModuleNames.Add("ProceduralMeshComponent");
 
 		// Editor-only tooling (material authoring commandlet).
 		if (Target.bBuildEditor)
 		{
-			PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "MaterialEditor", "AssetTools", "MeshDescription", "StaticMeshDescription" });
+			PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "MaterialEditor", "AssetTools" });
 		}
 
 		PublicIncludePaths.AddRange(new string[] {

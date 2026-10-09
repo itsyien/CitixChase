@@ -12,6 +12,8 @@ struct FCitixRoadNetwork;
 struct FCitixChaseHold
 {
 	int32 RelayIndex = INDEX_NONE;
+ int32 ExitIndex = INDEX_NONE;
+ float StartedAt=0.f;
 	float SecondsRemaining = 0.f;
 	bool bCapture = false;
 	int32 BreakawayIndex = INDEX_NONE;
@@ -35,31 +37,36 @@ public:
 	void TryRam(ACitixVehiclePawn* Source, ACitixVehiclePawn* Target, float ClosingSpeedKmh);
 	void UseRunnerSmoke(APlayerController* Player);
  void UseChaserIce(APlayerController* Player);
+ void UseChaserRapidBrake(APlayerController* Player);
 	void TryRunOver(AActor* Car, const FVector& From, const FVector& To, float SpeedKmh);
 	bool CanClaimReplacement(const AController* Controller, const ACitixVehiclePawn* Vehicle) const;
 	bool IsReplacementVehicle(const ACitixVehiclePawn* Vehicle) const;
 	void ClaimReplacement(AController* Controller, ACitixVehiclePawn* Vehicle);
 	void FinishRound(bool bRunnerWon, const FString& Reason);
 	bool CanAcceptDriveInput() const;
+	bool SelectLobbyMap(APlayerController* Host, bool Hillside);
 	void FireChasePistol(APlayerController* Shooter, const FVector& Origin, const FVector& Direction);
 private:
 	void InitializeBreakaways();
 	bool IsAtBreakaway(AController* Controller, int32 Index) const;
 	void ActivateBreakaway(int32 Index);
-	TArray<TObjectPtr<ACitixDestinationBeacon>> BreakawayBeacons;
+	UPROPERTY() TArray<TObjectPtr<ACitixDestinationBeacon>> BreakawayBeacons;
 	float LastPistolShot = -10.f;
 	void StartRound();
 	ACitixChaseGameState* ChaseState() const;
 	float PhaseTime = 0.f;
 	int32 RoundNumber = 0;
 	TArray<FVector> RelayLocations;
+	TArray<FVector> ValidatedRelaySites;
+	int32 RelaySelectionSeed = 0;
+	bool SelectMatchRelays();
 	TArray<FVector> ExitLocations;
 	TArray<FVector> SpawnLocations;
 	TArray<FVector> ReplacementLocations;
-	TArray<TObjectPtr<ACitixDestinationBeacon>> RelayBeacons;
-	TArray<TObjectPtr<ACitixDestinationBeacon>> ExitBeacons;
-	TArray<TObjectPtr<ACitixDestinationBeacon>> ReplacementBeacons;
-	TArray<TObjectPtr<ACitixVehiclePawn>> ReplacementCars;
+	UPROPERTY() TArray<TObjectPtr<ACitixDestinationBeacon>> RelayBeacons;
+	UPROPERTY() TArray<TObjectPtr<ACitixDestinationBeacon>> ExitBeacons;
+	UPROPERTY() TArray<TObjectPtr<ACitixDestinationBeacon>> ReplacementBeacons;
+	UPROPERTY() TArray<TObjectPtr<ACitixVehiclePawn>> ReplacementCars;
 	TArray<bool> ActivatedRelays;
 	TMap<TWeakObjectPtr<AController>, FCitixChaseHold> ActiveHolds;
  TMap<TWeakObjectPtr<AController>,TSet<int32>> GateOverlaps;
@@ -72,16 +79,13 @@ private:
 	void ClearHold(AController* Controller, bool bInterrupted);
 	void UpdateInteractionPresentation();
 	bool IsCaptureRange(const AController* Controller) const;
-	bool IsAtExit(const AController* Controller) const;
+	bool IsAtExit(const AController* Controller,int32 ExitIndex=INDEX_NONE) const;
 	float LastRamTime = -100.f;
 	TWeakObjectPtr<ACitixVehiclePawn> LastRamSource;
 	TWeakObjectPtr<ACitixVehiclePawn> LastRamTarget;
 	/** Latched true once the last ram pair has moved apart again (see Tick). */
 	bool bRamSeparated = true;
 	float CaptureProtectionUntil = 0.f;
-	float NextRevealAt = 0.f;
-	float RevealEndsAt = 0.f;
-	bool bFirstReveal = true;
 	void UpdateRunnerReveal();
 	void SpawnReplacementCars();
 	void SnapChaseLocationsToRoads(const FCitixRoadNetwork& Roads);
@@ -112,6 +116,11 @@ private:
 	int32 ChaseTestRams = 0;
 	int32 ChaseTestAttempts = 0;
 	bool bChaseTest = false;
+	UPROPERTY() TArray<TObjectPtr<class ACitixRoundLifecycleProbe>> LifecycleProbes;
+	int32 LifecycleCompletedMatches=0;
+	float LifecycleDeadline=0.f;
+	bool bLifecycleReceiptWritten=false;
+	TArray<FVector> LifecycleMatchSites;
 	/** -CitixChaseTestCapture: verify the capture win instead of the second wreck. */
 	bool bChaseTestCapture = false;
 	/** -CitixChaseTestTimeout: verify the pursuit timer awards the chaser round. */

@@ -56,7 +56,7 @@ public:
  FString RoomName;
  TArray<FCitixNearbyRoom> Rooms;
  int32 ResultsRevision=0;
- static constexpr int32 ProtocolVersion=1;
+ static constexpr int32 ProtocolVersion=4;
  static FString DefaultRoomName();
  static FString NormalizeRoomName(const FString& Name);
  static bool ValidateAddress(const FString& Address);

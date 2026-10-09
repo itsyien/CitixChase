@@ -1,4 +1,6 @@
 #include "Chase/CitixChaseGameMode.h"
+#include "Chase/CitixRelayLayout.h"
+#include "Chase/CitixRoundLifecycleProbe.h"
 #include "Network/CitixSessionSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Chase/CitixIceWave.h"
@@ -7,7 +9,6 @@
 #include "Chase/CitixGateLayout.h"
 #include "Chase/CitixSmokeCloud.h"
 #include "Components/InstancedStaticMeshComponent.h"
-#include "Chase/CitixChaseGameMode.h"
 #include "World/CitixTimeOfDay.h"
 #include "Chase/CitixChaseGameState.h"
 #include "Chase/CitixChasePlayerState.h"
@@ -17,6 +18,8 @@
 #include "Vehicle/CitixVehiclePawn.h"
 #include "Vehicle/CitixVehicleMovementComponent.h"
 #include "City/CitixCityGenerator.h"
+#include "City/CitixHillsideLayout.h"
+#include "Kismet/GameplayStatics.h"
 #include "City/CitixCityChunk.h"
 #include "Traffic/CitixTrafficVehicle.h"
 #include "Traffic/CitixTrafficSystem.h"
@@ -32,7 +35,24 @@
 #include "Misc/Paths.h"
 
 ACitixChaseGameMode::ACitixChaseGameMode() { PlayerControllerClass = ACitixDrivingPlayerController::StaticClass(); PlayerStateClass = ACitixChasePlayerState::StaticClass(); GameStateClass = ACitixChaseGameState::StaticClass(); DefaultPawnClass = ACitixVehiclePawn::StaticClass(); HUDClass = ACitixDrivingHUD::StaticClass(); PrimaryActorTick.bCanEverTick = true; bChaseTest = FParse::Param(FCommandLine::Get(), TEXT("CitixChaseTest")); bChaseTestCapture = FParse::Param(FCommandLine::Get(), TEXT("CitixChaseTestCapture")); bChaseTestTimeout = FParse::Param(FCommandLine::Get(), TEXT("CitixChaseTestTimeout")); bChaseTestSecondExit = FParse::Param(FCommandLine::Get(), TEXT("CitixChaseTestSecondExit")); bChaseTestRelayHold = FParse::Param(FCommandLine::Get(), TEXT("CitixChaseTestRelayHold")); }
-void ACitixChaseGameMode::BeginPlay() { Super::BeginPlay(); int32 CitySeed = 0; int32 CityConfigHash = 0; RelayLocations = { FVector(-26000.f, -17000.f, 200.f), FVector(21000.f, -14000.f, 200.f), FVector(-19000.f, 21000.f, 200.f), FVector(25000.f, 18000.f, 200.f), FVector(0.f, 0.f, 200.f) }; ExitLocations = { FVector(-31000.f, 30000.f, 200.f), FVector(31000.f, -30000.f, 200.f) }; ReplacementLocations = { FVector(-9000.f, -10000.f, 200.f), FVector(11000.f, 9000.f, 200.f) }; const FVector SpawnPairs[][2] = { { FVector(-22000.f, -16000.f, 300.f), FVector(18000.f, 12000.f, 300.f) }, { FVector(-21000.f, 17000.f, 300.f), FVector(22000.f, -15000.f, 300.f) }, { FVector(-24000.f, 4000.f, 300.f), FVector(21000.f, -4000.f, 300.f) } }; const int32 SpawnPair = FMath::RandRange(0, UE_ARRAY_COUNT(SpawnPairs) - 1); SpawnLocations = { SpawnPairs[SpawnPair][0], SpawnPairs[SpawnPair][1] }; ActivatedRelays.Init(false, RelayLocations.Num()); if (GetWorld()) { ACitixCityGenerator* City = GetWorld()->SpawnActorDeferred<ACitixCityGenerator>(ACitixCityGenerator::StaticClass(), FTransform::Identity); if (City) { City->bAutoGenerateOnBeginPlay = false; FParse::Value(FCommandLine::Get(),TEXT("CitixCitySeed="),City->SeedOverride); City->bSpawnPedestrians = false; City->FinishSpawning(FTransform::Identity); City->GenerateCity(); const FCitixRoadNetwork& Roads = City->GetRoadNetwork(); CitySeed = City->GetResolvedSeed(); CityConfigHash = static_cast<int32>(HashCombine(GetTypeHash(Roads.CitySize), HashCombine(GetTypeHash(Roads.Nodes.Num()), GetTypeHash(Roads.Edges.Num())))); SnapChaseLocationsToRoads(Roads); } auto Unsafe=[](const FVector& P) { return P.ContainsNaN() || P.SizeSquared2D()>FMath::Square(10000000.f); }; if (SpawnLocations.Num()!=2 || SpawnLocations.ContainsByPredicate(Unsafe) || RelayLocations.ContainsByPredicate(Unsafe) || ExitLocations.ContainsByPredicate(Unsafe) || ReplacementLocations.ContainsByPredicate(Unsafe)) { SpawnLocations.Reset(); if (ACitixChaseGameState* S=ChaseState()) S->StatusText=TEXT("No safe road layout found — host a new city"); return; } for (const FVector& Location : RelayLocations) { ACitixDestinationBeacon* Beacon = GetWorld()->SpawnActor<ACitixDestinationBeacon>(); Beacon->SetRelayProjection(Location); RelayBeacons.Add(Beacon); } for (const FVector& Location : ExitLocations) { ACitixDestinationBeacon* Beacon = GetWorld()->SpawnActor<ACitixDestinationBeacon>(); Beacon->SetDestination(Location, ECitixSurface::EmissiveCool); Beacon->Hide(); ExitBeacons.Add(Beacon); } for (const FVector& Location : ReplacementLocations) { ACitixDestinationBeacon* Beacon = GetWorld()->SpawnActor<ACitixDestinationBeacon>(); Beacon->SetDestination(Location, ECitixSurface::CarPaint); Beacon->Hide(); ReplacementBeacons.Add(Beacon); } } EnsurePlayerStarts(); InitializeBreakaways(); if (ACitixChaseGameState* S = ChaseState()) { S->CitySeed = CitySeed; S->CityConfigHash = CityConfigHash; S->LayoutRelayLocations = RelayLocations; S->LayoutExitLocations = ExitLocations; S->LayoutSpawnLocations = SpawnLocations; S->LayoutReplacementLocations = ReplacementLocations; S->StatusText = TEXT("Waiting for two drivers"); } }
+bool ACitixChaseGameMode::SelectLobbyMap(APlayerController* Host,bool Hillside)
+{
+ auto* State=ChaseState();
+ if(!Host || !Host->HasAuthority() || !Host->IsLocalController() || !State || GetWorld()->GetNetMode()!=NM_ListenServer) return false;
+ if(State->Phase!=ECitixChasePhase::Waiting && State->Phase!=ECitixChasePhase::MatchResults) return false;
+ if(State->bHillsideMap==Hillside || !GetWorld()->NextURL.IsEmpty()) return false;
+ FURL Destination=GetWorld()->URL;
+ Destination.AddOption(Hillside ? TEXT("CitixMap=Hillside") : TEXT("CitixMap=City"));
+ Destination.AddOption(*FString::Printf(TEXT("CitixSeed=%d"),State->CitySeed));
+ Destination.AddOption(TEXT("listen"));
+ if(!GetWorld()->ServerTravel(Destination.ToString(),true)) {State->StatusText=TEXT("Map loading failed — try selecting again"); return false;}
+ LobbyReady.Reset(); RematchReady.Reset();
+ for(APlayerState* Player:State->PlayerArray) if(auto* PS=Cast<ACitixChasePlayerState>(Player)) {PS->bReady=false; PS->bCityIdentityValid=false;}
+ State->StatusText=Hillside ? TEXT("Loading Hillside Switchback…") : TEXT("Loading City…");
+ UE_LOG(LogCitix,Log,TEXT("[CitixChase] Host selected map: %s"),Hillside ? TEXT("Hillside") : TEXT("City"));
+ return true;
+}
+void ACitixChaseGameMode::BeginPlay() { Super::BeginPlay(); int32 CitySeed = 0; int32 CityConfigHash = 0; RelayLocations.Reset(); ExitLocations = { FVector(-31000.f, 30000.f, 200.f), FVector(31000.f, -30000.f, 200.f) }; ReplacementLocations = { FVector(-9000.f, -10000.f, 200.f), FVector(11000.f, 9000.f, 200.f) }; const FVector SpawnPairs[][2] = { { FVector(-22000.f, -16000.f, 300.f), FVector(18000.f, 12000.f, 300.f) }, { FVector(-21000.f, 17000.f, 300.f), FVector(22000.f, -15000.f, 300.f) }, { FVector(-24000.f, 4000.f, 300.f), FVector(21000.f, -4000.f, 300.f) } }; int32 SpawnPair = FMath::RandRange(0, UE_ARRAY_COUNT(SpawnPairs) - 1); if (bChaseTest) FParse::Value(FCommandLine::Get(),TEXT("CitixSpawnPair="),SpawnPair); SpawnPair=FMath::Clamp(SpawnPair,0,UE_ARRAY_COUNT(SpawnPairs)-1); UE_LOG(LogCitix,Log,TEXT("[CitixChase] Spawn pair %d selected"),SpawnPair); SpawnLocations = { SpawnPairs[SpawnPair][0], SpawnPairs[SpawnPair][1] }; ActivatedRelays.Init(false, RelayLocations.Num()); if (GetWorld()) { ACitixCityGenerator* City = GetWorld()->SpawnActorDeferred<ACitixCityGenerator>(ACitixCityGenerator::StaticClass(), FTransform::Identity); if (City) { City->bAutoGenerateOnBeginPlay = false; City->bHillsideMap=UGameplayStatics::ParseOption(OptionsString,TEXT("CitixMap"))==TEXT("Hillside"); FParse::Value(FCommandLine::Get(),TEXT("CitixCitySeed="),City->SeedOverride); const FString TravelSeed=UGameplayStatics::ParseOption(OptionsString,TEXT("CitixSeed")); if(!TravelSeed.IsEmpty() && TravelSeed.IsNumeric()) City->SeedOverride=FCString::Atoi(*TravelSeed); if(auto* Selected=ChaseState()) {Selected->bHillsideMap=City->bHillsideMap; Selected->MapRevision=City->bHillsideMap ? FCitixHillsideLayout::Revision : 0;} City->bSpawnPedestrians = false; City->FinishSpawning(FTransform::Identity); City->GenerateCity(); const FCitixRoadNetwork& Roads = City->GetRoadNetwork(); CitySeed = City->GetResolvedSeed(); CityConfigHash = static_cast<int32>(Roads.GetLayoutHash(City->bHillsideMap ? FCitixHillsideLayout::Revision : 0)); SnapChaseLocationsToRoads(Roads); } auto Unsafe=[](const FVector& P) { return P.ContainsNaN() || P.SizeSquared2D()>FMath::Square(10000000.f); }; if (SpawnLocations.Num()!=2 || RelayLocations.Num()!=FCitixChaseRules::ActiveRelayCount || SpawnLocations.ContainsByPredicate(Unsafe) || RelayLocations.ContainsByPredicate(Unsafe) || ExitLocations.ContainsByPredicate(Unsafe) || ReplacementLocations.ContainsByPredicate(Unsafe)) { SpawnLocations.Reset(); if (ACitixChaseGameState* S=ChaseState()) S->StatusText=TEXT("No safe road layout found — host a new city"); return; } for (const FVector& Location : RelayLocations) { ACitixDestinationBeacon* Beacon = GetWorld()->SpawnActor<ACitixDestinationBeacon>(); Beacon->SetRelayProjection(Location); RelayBeacons.Add(Beacon); } for (const FVector& Location : ExitLocations) { ACitixDestinationBeacon* Beacon = GetWorld()->SpawnActor<ACitixDestinationBeacon>(); Beacon->SetExitProjection(Location); Beacon->Hide(); ExitBeacons.Add(Beacon); } for (const FVector& Location : ReplacementLocations) { ACitixDestinationBeacon* Beacon = GetWorld()->SpawnActor<ACitixDestinationBeacon>(); Beacon->SetDestination(Location, ECitixSurface::CarPaint); Beacon->Hide(); ReplacementBeacons.Add(Beacon); } } EnsurePlayerStarts(); InitializeBreakaways(); if (ACitixChaseGameState* S = ChaseState()) { S->CitySeed = CitySeed; S->CityConfigHash = CityConfigHash; S->LayoutRelayLocations = RelayLocations; S->LayoutExitLocations = ExitLocations; S->LayoutSpawnLocations = SpawnLocations; S->LayoutReplacementLocations = ReplacementLocations; S->StatusText = TEXT("Waiting for two drivers"); } }
 void ACitixChaseGameMode::PreLogin(const FString& Options, const FString& Address, const FUniqueNetIdRepl& UniqueId, FString& ErrorMessage)
 {
 	Super::PreLogin(Options, Address, UniqueId, ErrorMessage);
@@ -58,8 +78,8 @@ void ACitixChaseGameMode::InitializeBreakaways()
    Edges.Sort([Seed=S->CitySeed](int32 A,int32 B) { return HashCombine(GetTypeHash(A),GetTypeHash(Seed))<HashCombine(GetTypeHash(B),GetTypeHash(Seed)); });
    TArray<FCitixGateCandidate> Candidates;
    for (int32 I:Edges) {
-    const auto& E=Roads.Edges[I]; const FVector A(Roads.Nodes[E.NodeA].Position,0),B(Roads.Nodes[E.NodeB].Position,0);
-    const float Length=FVector::Distance(A,B);
+    const auto& E=Roads.Edges[I]; const FVector A=Roads.EdgePoint3D(I,0),B=Roads.EdgePoint3D(I,1);
+    const float Length=Roads.EdgeLength(I);
     if (Length<3500.f) continue; // Keep posts away from small junction connectors.
     const int32 Count=FMath::CeilToInt(Length/2500.f);
     const float Yaw=(B-A).Rotation().Yaw;
@@ -176,7 +196,15 @@ void ACitixChaseGameMode::FireChasePistol(APlayerController* Shooter, const FVec
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(ChasePistol), false, Shooter->GetPawn());
 	FHitResult Hit;
 	const FVector End = ServerOrigin + Direction.GetSafeNormal() * 5000.f;
-	const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, ServerOrigin, End, ECC_Visibility, Params);
+	bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, ServerOrigin, End, ECC_Visibility, Params);
+ const FVector Muzzle=Cast<ACitixOnFootPawn>(Shooter->GetPawn())->GetChaseMuzzle();
+ const FVector AimEndpoint=bHit ? Hit.ImpactPoint : End;
+ FHitResult MuzzleHit;
+ // The camera may see past a corner while the physical weapon is still behind it.
+ // Resolve that obstruction before damage and use the same endpoint for the tracer.
+ if (GetWorld()->LineTraceSingleByChannel(MuzzleHit,Muzzle,AimEndpoint,ECC_Visibility,Params)) {
+  Hit=MuzzleHit; bHit=true;
+ }
  if (bChaseTest) UE_LOG(LogCitix,Log,TEXT("[CitixPistolTest] shot ammo=%d actor=%s origin=%s end=%s"),PS->Ammo,*GetNameSafe(Hit.GetActor()),*ServerOrigin.ToCompactString(),*End.ToCompactString());
 	bool bRunnerHit = false;
 	if (ACitixOnFootPawn* Runner = Cast<ACitixOnFootPawn>(Hit.GetActor()))
@@ -187,7 +215,7 @@ void ACitixChaseGameMode::FireChasePistol(APlayerController* Shooter, const FVec
    if (Target->PistolHits >= 4) FinishRound(false, TEXT("Four pistol hits confirmed"));
 			bRunnerHit = true;
 		}
-	S->MulticastPistolShot(Cast<ACitixOnFootPawn>(Shooter->GetPawn())->GetChaseMuzzle(), bHit ? Hit.ImpactPoint : End, bRunnerHit, PS);
+	S->MulticastPistolShot(Muzzle, bHit ? Hit.ImpactPoint : End, bRunnerHit, PS);
 }
 
 void ACitixChaseGameMode::EnsurePlayerStarts()
@@ -290,19 +318,18 @@ void ACitixChaseGameMode::Logout(AController* Exiting) { for (TActorIterator<ACi
 void ACitixChaseGameMode::StartRound()
 {
  if (GeneratedPlayerStarts.Num()!=2) { if (ACitixChaseGameState* S=ChaseState()) { S->Phase=ECitixChasePhase::Waiting; S->StatusText=TEXT("No safe road starts found — host a new city"); } return; }
+ // Both role assignments use one server-owned selection. Only a new match rerolls.
+ if (RoundNumber==0 && !SelectMatchRelays()) { CancelMatch(TEXT("No safe relay layout found — host a new city")); return; }
 	InitializeBreakaways();
 	LobbyReady.Reset();
 	RematchReady.Reset();
 	for (TPair<TWeakObjectPtr<AController>, FCitixChaseHold>& Pair : ActiveHolds) ClearHold(Pair.Key.Get(), false);
 	ActiveHolds.Reset();
 	PendingEjections.Reset();
-	for (ACitixVehiclePawn* Car : ReplacementCars) if (Car) Car->Destroy();
+	for (ACitixVehiclePawn* Car : ReplacementCars) if (IsValid(Car)) Car->Destroy();
 	ReplacementCars.Reset();
 	++RoundNumber;
 	PhaseTime = FCitixChaseRules::CountdownSeconds;
-	NextRevealAt = 0.f;
-	RevealEndsAt = 0.f;
-	bFirstReveal = true;
 	ActivatedRelays.Init(false, RelayLocations.Num());
 	for (int32 Index = 0; Index < RelayBeacons.Num(); ++Index) if (RelayBeacons[Index]) RelayBeacons[Index]->SetRelayProjection(RelayLocations[Index]);
 	for (ACitixDestinationBeacon* Beacon : ExitBeacons) if (Beacon) Beacon->Hide();
@@ -314,6 +341,7 @@ void ACitixChaseGameMode::StartRound()
 	S->RoundNumber = RoundNumber;
 	S->PhaseSecondsRemaining = PhaseTime;
 	S->CompletedRelays = 0;
+	S->LayoutRelayLocations = RelayLocations;
 	S->ActivatedRelays = ActivatedRelays;
 	S->ActiveReplacementLocations.Reset();
 	S->bExitsUnlocked = false;
@@ -342,7 +370,7 @@ void ACitixChaseGameMode::StartRound()
 			ChasePS->ChaseRole = (PlayerIndex % 2 == RoundNumber % 2) ? ECitixChaseRole::Runner : ECitixChaseRole::Chaser;
 			ChasePS->CharacterHealth = 100.f;
 			ChasePS->bReplacementUsed = false;
-			ChasePS->IceCharges=ChasePS->ChaseRole==ECitixChaseRole::Chaser ? 1 : 0; ChasePS->NextIceAt=ChasePS->FrozenUntil=ChasePS->FrozenSpeedLimit=ChasePS->LastIceAt=0; ChasePS->bLastIceHit=false;
+			ChasePS->RapidBrakeCharges=ChasePS->ChaseRole==ECitixChaseRole::Chaser ? 1 : 0; ChasePS->NextRapidBrakeAt=ChasePS->RapidBrakeUntil=0; ChasePS->IceCharges=ChasePS->ChaseRole==ECitixChaseRole::Chaser ? 1 : 0; ChasePS->NextIceAt=ChasePS->FrozenUntil=ChasePS->FrozenSpeedLimit=ChasePS->LastIceAt=0; ChasePS->bLastIceHit=false;
    ChasePS->StaggerUntil = 0.f; ChasePS->GateSlowStartedAt=ChasePS->GateSlowUntil=0.f;
 			ChasePS->RunnerCarHits = 0;
    ChasePS->ReplacementReadyAt = 0.f; ChasePS->PistolHits = 0; ChasePS->Ammo = 15; ChasePS->NextAmmoAt = 0.f; ChasePS->SmokeCharges=ChasePS->ChaseRole==ECitixChaseRole::Runner ? 1 : 0; ChasePS->NextSmokeAt=ChasePS->SmokeEmittingUntil=0.f;
@@ -351,6 +379,13 @@ void ACitixChaseGameMode::StartRound()
 		}
 	}
  S->Phase = ECitixChasePhase::Countdown;
+ if (bChaseTest && FParse::Param(FCommandLine::Get(),TEXT("CitixRoundLifecycleProbe"))) {
+  if (LifecycleProbes.IsEmpty()) for (APlayerState* State:GameState->PlayerArray) {
+   FActorSpawnParameters Params; Params.Owner=State->GetOwner();
+   if (auto* Probe=GetWorld()->SpawnActor<ACitixRoundLifecycleProbe>(ACitixRoundLifecycleProbe::StaticClass(),FTransform::Identity,Params)) LifecycleProbes.Add(Probe);
+  }
+  LifecycleDeadline=GetWorld()->GetTimeSeconds()+60.f;
+ }
  S->ForceNetUpdate();
 }
 void ACitixChaseGameMode::Tick(float Dt)
@@ -403,47 +438,42 @@ void ACitixChaseGameMode::Tick(float Dt)
    }
   }
   for (APlayerState* State : GameState->PlayerArray) if (ACitixChasePlayerState* PS = Cast<ACitixChasePlayerState>(State))
-   if (PS->ChaseRole == ECitixChaseRole::Chaser) { FCitixChaseRules::RefillAmmo(GetWorld()->GetTimeSeconds(), PS->Ammo, PS->NextAmmoAt); FCitixChaseRules::RefillIce(GetWorld()->GetTimeSeconds(),PS->IceCharges,PS->NextIceAt); }
+   if (PS->ChaseRole == ECitixChaseRole::Chaser) { FCitixChaseRules::RefillAmmo(GetWorld()->GetTimeSeconds(), PS->Ammo, PS->NextAmmoAt); FCitixChaseRules::RefillIce(GetWorld()->GetTimeSeconds(),PS->IceCharges,PS->NextIceAt); FCitixChaseRules::RefillRapidBrake(GetWorld()->GetTimeSeconds(),PS->RapidBrakeCharges,PS->NextRapidBrakeAt); }
    else FCitixChaseRules::RefillSmoke(GetWorld()->GetTimeSeconds(),PS->SmokeCharges,PS->NextSmokeAt);
  }
 
-	if (S->Phase == ECitixChasePhase::Pursuit && S->bExitsUnlocked)
-	{
-		for (APlayerState* State : GameState->PlayerArray)
-		{
-			if (ACitixChasePlayerState* PS = Cast<ACitixChasePlayerState>(State))
-			{
-				if (PS->ChaseRole == ECitixChaseRole::Runner && IsAtExit(Cast<AController>(State->GetOwner())))
-				{
-					FinishRound(true, TEXT("Runner escaped"));
-					return;
-				}
-			}
-		}
-	}
-
- // Relay entry immediately activates once, for either pawn type.
- if (S->Phase==ECitixChasePhase::Pursuit && !S->bExitsUnlocked)
-  for (APlayerState* State:GameState->PlayerArray) {
-   auto* PS=Cast<ACitixChasePlayerState>(State); auto* Runner=State ? Cast<AController>(State->GetOwner()) : nullptr;
-   int32 Relay=INDEX_NONE;
-   if (PS && PS->ChaseRole==ECitixChaseRole::Runner && IsNearRelay(Runner,Relay)) CompleteRelayAt(Runner,Relay);
+ // Automatic server-owned commitments reuse the existing replicated interaction HUD.
+ for(APlayerState* State:GameState->PlayerArray) {
+  auto* PS=Cast<ACitixChasePlayerState>(State); auto* Runner=State ? Cast<AController>(State->GetOwner()) : nullptr;
+  if(!PS || PS->ChaseRole!=ECitixChaseRole::Runner || !Runner)continue;
+  if(!S->bExitsUnlocked) CompleteRelay(Runner);
+  else if(!ActiveHolds.Contains(Runner)) for(int32 I=0;I<ExitLocations.Num();++I) if(IsAtExit(Runner,I)) {
+   auto& Hold=ActiveHolds.Add(Runner); Hold.ExitIndex=I; Hold.StartedAt=GetWorld()->GetTimeSeconds(); Hold.SecondsRemaining=FCitixChaseRules::EscapeCommitDuration;
+   PS->bInteractionActive=true; PS->InteractionType=ECitixChaseInteraction::Escape; PS->InteractionSecondsRemaining=Hold.SecondsRemaining;
+   PS->ForceNetUpdate(); S->StatusText=TEXT("Runner escaping — intercept the exit"); break;
   }
+ }
 
-	TArray<TWeakObjectPtr<AController>> CompletedHolds;
+	TArray<TWeakObjectPtr<AController>,TInlineAllocator<2>> CompletedHolds;
 	bool bCaptureCompleted = false;
+ bool bEscapeCompleted=false;
 	for (TPair<TWeakObjectPtr<AController>, FCitixChaseHold>& Pair : ActiveHolds)
 	{
 		AController* Controller = Pair.Key.Get();
 		FCitixChaseHold& Hold = Pair.Value;
-		const bool bValid = Controller && (Hold.BreakawayIndex != INDEX_NONE ? IsAtBreakaway(Controller, Hold.BreakawayIndex) : (Hold.bCapture ? IsCaptureRange(Controller) : IsAtRelay(Controller, Hold.RelayIndex)));
+		const bool bValid = Controller && (Hold.ExitIndex!=INDEX_NONE ? (S->bExitsUnlocked && IsAtExit(Controller,Hold.ExitIndex)) : Hold.BreakawayIndex != INDEX_NONE ? IsAtBreakaway(Controller, Hold.BreakawayIndex) : (Hold.bCapture ? IsCaptureRange(Controller) : IsAtRelay(Controller, Hold.RelayIndex)));
 		if (!bValid)
 		{
 			CompletedHolds.Add(Pair.Key);
-			ClearHold(Controller, true);
+			if(auto* PC=Cast<ACitixDrivingPlayerController>(Controller)) {
+    if(Hold.ExitIndex!=INDEX_NONE) PC->ClientChaseMessage(TEXT("ESCAPE CANCELLED / STAY INSIDE EXIT"));
+    else if(Hold.RelayIndex!=INDEX_NONE) PC->ClientChaseMessage(TEXT("SYNC RESET / STAY WITHIN 9.6m AND BELOW 60 KM/H"));
+   }
+   ClearHold(Controller, true);
 			continue;
 		}
-		Hold.SecondsRemaining -= Dt;
+		if(Hold.RelayIndex!=INDEX_NONE || Hold.ExitIndex!=INDEX_NONE) Hold.SecondsRemaining=FCitixChaseRules::CommitmentRemaining(Hold.StartedAt,GetWorld()->GetTimeSeconds(),Hold.ExitIndex!=INDEX_NONE ? FCitixChaseRules::EscapeCommitDuration : FCitixChaseRules::RelaySyncDuration);
+  else Hold.SecondsRemaining -= Dt;
 		if (ACitixChasePlayerState* PS = Controller->GetPlayerState<ACitixChasePlayerState>()) PS->InteractionSecondsRemaining = FMath::Max(0.f, Hold.SecondsRemaining);
 		if (Hold.SecondsRemaining <= 0.f)
 		{
@@ -452,13 +482,15 @@ void ACitixChaseGameMode::Tick(float Dt)
 			{
 				ActivateBreakaway(Hold.BreakawayIndex);
 			}
-			else if (Hold.bCapture) bCaptureCompleted = true;
+			else if(Hold.ExitIndex!=INDEX_NONE) bEscapeCompleted=true;
+   else if (Hold.bCapture) bCaptureCompleted = true;
 			else CompleteRelayAt(Controller, Hold.RelayIndex);
 			ClearHold(Controller, false);
 		}
 	}
 	for (const TWeakObjectPtr<AController>& Controller : CompletedHolds) ActiveHolds.Remove(Controller);
 	UpdateInteractionPresentation();
+	if(bEscapeCompleted) {FinishRound(true,TEXT("Runner escaped after four-second commitment")); return;}
 	if (bCaptureCompleted)
 	{
 		FinishRound(false, TEXT("Runner captured"));
@@ -473,8 +505,8 @@ void ACitixChaseGameMode::Tick(float Dt)
 		S->Phase = ECitixChasePhase::Pursuit;
 		PhaseTime = 300.f;
 		S->PhaseSecondsRemaining = PhaseTime;
-		NextRevealAt = GetWorld()->GetTimeSeconds();
-		S->StatusText = TEXT("Runner: pass five relays and escape. Chaser: stop them.");
+		UpdateRunnerReveal();
+		S->StatusText = TEXT("Runner: sync five relays, then commit four seconds at an exit. Chaser: stop them.");
 		UE_LOG(LogCitix, Log, TEXT("[CitixChase] Pursuit begins (round %d)."), RoundNumber);
 	}
 	else
@@ -482,12 +514,27 @@ void ACitixChaseGameMode::Tick(float Dt)
 		FinishRound(false, TEXT("Time expired"));
 	}
 }
-void ACitixChaseGameMode::CompleteRelay(AController* Runner) { int32 Relay = INDEX_NONE; if (IsNearRelay(Runner, Relay)) CompleteRelayAt(Runner, Relay); }
-void ACitixChaseGameMode::CompleteRelayAt(AController* Runner, int32 Relay) { ACitixChaseGameState* S = ChaseState(); ACitixChasePlayerState* PS = Runner ? Runner->GetPlayerState<ACitixChasePlayerState>() : nullptr; if (!S || S->Phase != ECitixChasePhase::Pursuit || !PS || PS->ChaseRole != ECitixChaseRole::Runner || S->bExitsUnlocked || !IsAtRelay(Runner, Relay) || !ActivatedRelays.IsValidIndex(Relay) || ActivatedRelays[Relay]) return; ActivatedRelays[Relay] = true; S->ActivatedRelays = ActivatedRelays; if (RelayBeacons.IsValidIndex(Relay) && RelayBeacons[Relay]) RelayBeacons[Relay]->Hide(); ++S->CompletedRelays; S->bExitsUnlocked = FCitixChaseRules::AreExitsUnlocked(S->CompletedRelays); if (S->bExitsUnlocked) for (ACitixDestinationBeacon* Beacon : ExitBeacons) if (Beacon) Beacon->SetDestination(ExitLocations[ExitBeacons.IndexOfByKey(Beacon)], ECitixSurface::EmissiveCool); S->StatusText = S->bExitsUnlocked ? TEXT("Exits unlocked — escape now") : FString::Printf(TEXT("Relay %d/5 complete"), S->CompletedRelays); UE_LOG(LogCitix, Log, TEXT("[CitixChase] Relay complete: %d/5%s."), S->CompletedRelays, S->bExitsUnlocked ? TEXT(" - exits unlocked") : TEXT("")); }
-bool ACitixChaseGameMode::IsNearRelay(const AController* Controller, int32& OutRelay) const { if (!Controller || !Controller->GetPawn()) return false; for (int32 Index = 0; Index < RelayLocations.Num(); ++Index) if (!ActivatedRelays[Index] && FVector::DistSquared(Controller->GetPawn()->GetActorLocation(), RelayLocations[Index]) <= FMath::Square(FCitixChaseRules::RelayInteractionRadius)) { OutRelay = Index; return true; } return false; }
-bool ACitixChaseGameMode::IsAtRelay(const AController* Controller, int32 RelayIndex) const { return Controller && Controller->GetPawn() && ActivatedRelays.IsValidIndex(RelayIndex) && !ActivatedRelays[RelayIndex] && RelayLocations.IsValidIndex(RelayIndex) && FVector::DistSquared(Controller->GetPawn()->GetActorLocation(), RelayLocations[RelayIndex]) <= FMath::Square(FCitixChaseRules::RelayInteractionRadius); }
+void ACitixChaseGameMode::CompleteRelay(AController* Runner) {
+ auto* S=ChaseState(); auto* PS=Runner ? Runner->GetPlayerState<ACitixChasePlayerState>() : nullptr; int32 Relay=INDEX_NONE;
+ if(!S || S->Phase!=ECitixChasePhase::Pursuit || !PS || PS->ChaseRole!=ECitixChaseRole::Runner || S->bExitsUnlocked || ActiveHolds.Contains(Runner) || !IsNearRelay(Runner,Relay) || !IsAtRelay(Runner,Relay))return;
+ auto& Hold=ActiveHolds.Add(Runner); Hold.RelayIndex=Relay; Hold.StartedAt=GetWorld()->GetTimeSeconds(); Hold.SecondsRemaining=FCitixChaseRules::RelaySyncDuration;
+ PS->bInteractionActive=true; PS->InteractionType=ECitixChaseInteraction::Relay; PS->InteractionSecondsRemaining=Hold.SecondsRemaining; PS->ForceNetUpdate();
+}
+void ACitixChaseGameMode::CompleteRelayAt(AController* Runner, int32 Relay) {
+ const auto* Hold=ActiveHolds.Find(Runner); if(!Hold || Hold->RelayIndex!=Relay || Hold->SecondsRemaining>0.f) return; ACitixChaseGameState* S = ChaseState(); ACitixChasePlayerState* PS = Runner ? Runner->GetPlayerState<ACitixChasePlayerState>() : nullptr; if (!S || S->Phase != ECitixChasePhase::Pursuit || !PS || PS->ChaseRole != ECitixChaseRole::Runner || S->bExitsUnlocked || !IsAtRelay(Runner, Relay) || !ActivatedRelays.IsValidIndex(Relay) || ActivatedRelays[Relay]) return; S->MulticastRelaySprinkles(Runner->GetPawn()->GetActorLocation(),Runner->GetPawn()->GetVelocity()); ActivatedRelays[Relay] = true; S->ActivatedRelays = ActivatedRelays; if (RelayBeacons.IsValidIndex(Relay) && RelayBeacons[Relay]) RelayBeacons[Relay]->Hide(); ++S->CompletedRelays; S->bExitsUnlocked = FCitixChaseRules::AreExitsUnlocked(S->CompletedRelays); if (S->bExitsUnlocked) for (ACitixDestinationBeacon* Beacon : RelayBeacons) if (IsValid(Beacon)) Beacon->Hide(); if (S->bExitsUnlocked) for (ACitixDestinationBeacon* Beacon : ExitBeacons) if (Beacon) Beacon->SetExitProjection(ExitLocations[ExitBeacons.IndexOfByKey(Beacon)]); S->StatusText = S->bExitsUnlocked ? TEXT("Exits unlocked — escape now") : FString::Printf(TEXT("Relay %d/%d complete"), S->CompletedRelays, FCitixChaseRules::RelaysRequired); UE_LOG(LogCitix, Log, TEXT("[CitixChase] Relay complete: %d/%d%s."), S->CompletedRelays, FCitixChaseRules::RelaysRequired, S->bExitsUnlocked ? TEXT(" - exits unlocked") : TEXT("")); }
+bool ACitixChaseGameMode::IsNearRelay(const AController* Controller, int32& OutRelay) const { if (!Controller || !Controller->GetPawn()) return false; for (int32 Index = 0; Index < RelayLocations.Num(); ++Index) if (!ActivatedRelays[Index] && FVector::DistSquared2D(Controller->GetPawn()->GetActorLocation(), RelayLocations[Index]) <= FMath::Square(FCitixChaseRules::RelayInteractionRadius)) { OutRelay = Index; return true; } return false; }
+bool ACitixChaseGameMode::IsAtRelay(const AController* Controller,int32 RelayIndex) const {
+ if(!Controller || !Controller->GetPawn() || !ActivatedRelays.IsValidIndex(RelayIndex) || ActivatedRelays[RelayIndex] || !RelayLocations.IsValidIndex(RelayIndex))return false;
+ const APawn* Pawn=Controller->GetPawn(); const auto& Location=RelayLocations[RelayIndex];
+ return FCitixChaseRules::RelayEligible(FVector::Dist2D(Pawn->GetActorLocation(),Location),Pawn->GetVelocity().Size2D()*.036f,Pawn->GetActorLocation().Z-Location.Z);
+}
 bool ACitixChaseGameMode::IsCaptureRange(const AController* Controller) const { if (!Controller || !Controller->GetPawn() || !Controller->GetPawn()->IsA<ACitixOnFootPawn>() || !GetWorld() || GetWorld()->GetTimeSeconds() < CaptureProtectionUntil) return false; for (APlayerState* State : GameState->PlayerArray) { const ACitixChasePlayerState* PS = Cast<ACitixChasePlayerState>(State); const AController* Other = State ? Cast<AController>(State->GetOwner()) : nullptr; if (!PS || PS->ChaseRole != ECitixChaseRole::Runner || !Other || !Other->GetPawn() || !Other->GetPawn()->IsA<ACitixOnFootPawn>() || Cast<ACitixOnFootPawn>(Other->GetPawn())->IsInShockwaveRecovery() || FVector::DistSquared(Controller->GetPawn()->GetActorLocation(), Other->GetPawn()->GetActorLocation()) > FMath::Square(250.f)) continue; FCollisionQueryParams Params(SCENE_QUERY_STAT(CitixCaptureSight), false); Params.AddIgnoredActor(Controller->GetPawn()); Params.AddIgnoredActor(Other->GetPawn()); FHitResult Hit; if (!GetWorld()->LineTraceSingleByChannel(Hit, Controller->GetPawn()->GetActorLocation(), Other->GetPawn()->GetActorLocation(), ECC_Visibility, Params)) return true; } return false; }
-bool ACitixChaseGameMode::IsAtExit(const AController* Controller) const { if (!Controller || !Cast<ACitixVehiclePawn>(Controller->GetPawn())) return false; for (const FVector& Exit : ExitLocations) if (FVector::DistSquared(Controller->GetPawn()->GetActorLocation(), Exit) <= FMath::Square(800.f)) return true; return false; }
+bool ACitixChaseGameMode::IsAtExit(const AController* Controller,int32 ExitIndex) const {
+ const auto* Car=Controller ? Cast<ACitixVehiclePawn>(Controller->GetPawn()) : nullptr;
+ if(!Car || Car->IsDisplayDestroyed() || !Car->IsOccupied()) return false;
+ for(int32 I=0;I<ExitLocations.Num();++I) if((ExitIndex==INDEX_NONE || I==ExitIndex) && FVector::DistSquared(Car->GetActorLocation(),ExitLocations[I])<=FMath::Square(800.f))return true;
+ return false;
+}
 void ACitixChaseGameMode::BeginInteraction(AController* InteractingController) { ACitixChaseGameState* S = ChaseState(); if (!S || !InteractingController) return; if (const ACitixOnFootPawn* Walker = Cast<ACitixOnFootPawn>(InteractingController->GetPawn()); Walker && Walker->IsInShockwaveRecovery() && S->Phase == ECitixChasePhase::Pursuit) return; ACitixChasePlayerState* PS = InteractingController->GetPlayerState<ACitixChasePlayerState>(); if (S->Phase == ECitixChasePhase::Waiting) { if (GetNumPlayers() != 2 || !PS || PS->bReady) return; if (!PS->bCityIdentityValid) { S->StatusText = TEXT("Waiting for city verification"); return; } LobbyReady.Add(InteractingController); PS->bReady = true; if (LobbyReady.Num() == 2) { UE_LOG(LogCitix, Log, TEXT("[CitixChase] Both drivers ready - starting round %d."), RoundNumber + 1); StartRound(); } else S->StatusText = TEXT("Ready — waiting for the other driver"); return; } if (S->Phase == ECitixChasePhase::MatchResults) { if (!PS || PS->bReady) return; RematchReady.Add(InteractingController); PS->bReady = true; if (RematchReady.Num() == 2) { RoundNumber = 0; for (APlayerState* State : GameState->PlayerArray) if (ACitixChasePlayerState* MatchPS = Cast<ACitixChasePlayerState>(State)) { MatchPS->RoundsWon = 0; MatchPS->bReady = false; } StartRound(); } else S->StatusText = TEXT("Rematch ready — waiting for the other driver"); return; } if (S->Phase != ECitixChasePhase::Pursuit || !PS || !InteractingController->GetPawn() || !InteractingController->GetPawn()->IsA<ACitixOnFootPawn>() ) return; if (ActiveHolds.Contains(InteractingController)) { if (ActiveHolds[InteractingController].RelayIndex!=INDEX_NONE) if (auto* Driving=Cast<ACitixDrivingPlayerController>(InteractingController)) Driving->RequestEnterVehicle(); return; } if (PS->ChaseRole==ECitixChaseRole::Runner && PS->CharacterHealth<100 && !PS->bReplacementUsed && PS->ReplacementReadyAt>0 && GetWorld()->GetTimeSeconds()>=PS->ReplacementReadyAt) if (auto* Driving=Cast<ACitixDrivingPlayerController>(InteractingController); Driving && Driving->FindChaseEntryCandidate(300.f) && Driving->RequestEnterVehicle()) return; const bool bCapture = PS->ChaseRole == ECitixChaseRole::Chaser && IsCaptureRange(InteractingController);
  if (!bCapture) { if (auto* Driving=Cast<ACitixDrivingPlayerController>(InteractingController)) Driving->RequestEnterVehicle(); return; }
  FCitixChaseHold& Hold=ActiveHolds.Add(InteractingController);
@@ -559,7 +606,28 @@ void ACitixChaseGameMode::TryRunOver(AActor* Car, const FVector& From, const FVe
 	}
 }
 void ACitixChaseGameMode::FinishRound(bool bRunnerWon, const FString& Reason) { ACitixChaseGameState* S = ChaseState(); if (!S || S->Phase == ECitixChasePhase::RoundResults || S->Phase == ECitixChasePhase::MatchResults) return; PhaseTime = 8.f; for (TPair<TWeakObjectPtr<AController>, FCitixChaseHold>& Pair : ActiveHolds) ClearHold(Pair.Key.Get(), false); ActiveHolds.Reset(); S->bInteractionActive = false; S->InteractionSecondsRemaining = 0.f; S->bRunnerRevealed = false; S->RevealSecondsRemaining = 0.f; S->Phase = ECitixChasePhase::RoundResults; S->PhaseSecondsRemaining = PhaseTime; S->StatusText = FString::Printf(TEXT("%s wins: %s"), bRunnerWon ? TEXT("Runner") : TEXT("Chaser"), *Reason); UE_LOG(LogCitix, Log, TEXT("[CitixChase] Round %d result: %s wins - %s."), RoundNumber, bRunnerWon ? TEXT("Runner") : TEXT("Chaser"), *Reason); for (APlayerState* PS : GameState->PlayerArray) if (ACitixChasePlayerState* C = Cast<ACitixChasePlayerState>(PS)) if ((C->ChaseRole == ECitixChaseRole::Runner) == bRunnerWon) ++C->RoundsWon; }
-void ACitixChaseGameMode::UpdateRunnerReveal() { ACitixChaseGameState* S = ChaseState(); if (!S || !GetWorld()) return; const float Now = GetWorld()->GetTimeSeconds(); if (!S->bRunnerRevealed && Now >= NextRevealAt) { S->bRunnerRevealed = true; RevealEndsAt = Now + 10.f; bFirstReveal = false; NextRevealAt = Now + 25.f; } S->NextRevealSecondsRemaining = FMath::Max(0.f, NextRevealAt - Now); if (S->bRunnerRevealed) { S->RevealSecondsRemaining = FMath::Max(0.f, RevealEndsAt - Now); if (Now >= RevealEndsAt) { S->bRunnerRevealed = false; S->RevealSecondsRemaining = 0.f; } } }
+void ACitixChaseGameMode::UpdateRunnerReveal() {
+ if(auto* S=ChaseState()) {
+  bool Visible=S->Phase==ECitixChasePhase::Pursuit;
+  const AController* Runner=nullptr; const AController* Chaser=nullptr;
+  for(const APlayerState* Player:S->PlayerArray) if(const auto* PS=Cast<ACitixChasePlayerState>(Player)) {
+   if(PS->ChaseRole==ECitixChaseRole::Runner) Runner=Cast<AController>(PS->GetOwner());
+   else if(PS->ChaseRole==ECitixChaseRole::Chaser) Chaser=Cast<AController>(PS->GetOwner());
+  }
+  if(Visible && Runner && Chaser && Runner->GetPawn() && Chaser->GetPawn()) {
+   const FVector Position=Runner->GetPawn()->GetActorLocation(); const float Distance=FVector::Dist2D(Position,Chaser->GetPawn()->GetActorLocation());
+   if(!FCitixChaseRules::RunnerTrackingVisible(true,Distance)) {
+    const float Now=GetWorld()->GetTimeSeconds();
+    const FVector From=Chaser->GetPawn()->GetPawnViewLocation(),To=Runner->GetPawn()->GetPawnViewLocation();
+    for(TActorIterator<ACitixSmokeCloud> It(GetWorld());It;++It) {
+     if(It->ContainsPoint(Position,Now) || It->IntersectsSightline(From,To,Now)) {Visible=false;break;}
+    }
+   }
+  }
+  if(S->bRunnerRevealed!=Visible) {S->bRunnerRevealed=Visible;S->ForceNetUpdate();}
+  S->RevealSecondsRemaining=0; S->NextRevealSecondsRemaining=0;
+ }
+}
 
 void ACitixChaseGameMode::SpawnReplacementCars()
 {
@@ -593,7 +661,34 @@ bool ACitixChaseGameMode::CanClaimReplacement(const AController* Controller, con
   && FCitixChaseRules::ReplacementReady(GetWorld()->GetTimeSeconds(), PS->ReplacementReadyAt, PS->bReplacementUsed,
    Vehicle->GetVehicleMovement()->GetSpeedKmh(), FVector::Distance(Controller->GetPawn()->GetActorLocation(), Vehicle->GetActorLocation()));
 }
-void ACitixChaseGameMode::ClaimReplacement(AController* Controller, ACitixVehiclePawn* Vehicle) { if (ACitixChasePlayerState* PS = Controller ? Controller->GetPlayerState<ACitixChasePlayerState>() : nullptr) if (Vehicle && Vehicle->GetOwningController() != Controller) PS->bReplacementUsed = true; }
+void ACitixChaseGameMode::ClaimReplacement(AController* Controller, ACitixVehiclePawn* Vehicle)
+{
+ auto* PS=Controller ? Controller->GetPlayerState<ACitixChasePlayerState>() : nullptr;
+ if (!HasAuthority() || !PS || !IsValid(Vehicle) || Vehicle->GetOwningController()==Controller || PS->bReplacementUsed) return;
+ PS->bReplacementUsed=true;
+ PS->RunnerCarHits=FCitixChaseRules::InitialVehicleHits(true);
+ auto* Movement=Vehicle->GetVehicleMovement();
+ Movement->RepairFull();
+ Movement->ApplyDamage(Movement->GetMaxHealth()*PS->RunnerCarHits/FCitixChaseRules::VehicleIntegrity);
+ PS->ForceNetUpdate(); Vehicle->ForceNetUpdate();
+ UE_LOG(LogCitix,Log,TEXT("[CitixChase] Replacement claimed: %s integrity %d/%d"),*GetNameSafe(Controller),FCitixChaseRules::ReplacementIntegrity,FCitixChaseRules::VehicleIntegrity);
+}
+
+bool ACitixChaseGameMode::SelectMatchRelays()
+{
+ const TArray<FVector> Previous=RelayLocations;
+ TArray<FVector> Selected;
+ for (int32 Attempt=0; Attempt<16; ++Attempt) {
+  Selected=FCitixRelayLayout::Select(ValidatedRelaySites,++RelaySelectionSeed);
+  if (Selected.Num()!=FCitixChaseRules::ActiveRelayCount) continue;
+  // Compare site membership rather than ordering; an order shuffle is not a reroll.
+  if (!Selected.ContainsByPredicate([&Previous](const FVector& P){ return !Previous.Contains(P); }) && Attempt<15) continue;
+  RelayLocations=MoveTemp(Selected);
+  UE_LOG(LogCitix,Log,TEXT("[CitixRelayLayout] match seed=%d pool=%d active=%d required=%d"),RelaySelectionSeed,ValidatedRelaySites.Num(),RelayLocations.Num(),FCitixChaseRules::RelaysRequired);
+  return true;
+ }
+ return false;
+}
 
 void ACitixChaseGameMode::ChaseTestTick()
 {
@@ -603,6 +698,8 @@ void ACitixChaseGameMode::ChaseTestTick()
 	{
 		return;
 	}
+	// Keep the existing test lobby setup, then leave pursuit to the real reveal/replication flow.
+	if (FParse::Param(FCommandLine::Get(),TEXT("CitixTrackerNetProbe")) && !FParse::Param(FCommandLine::Get(),TEXT("CitixRelayFXProbe")) && S->Phase!=ECitixChasePhase::Waiting) return;
 	ChaseTestTimer += World->GetDeltaSeconds();
 
 	auto ControllerWithRole = [this](ECitixChaseRole InRole) -> AController*
@@ -623,6 +720,133 @@ void ACitixChaseGameMode::ChaseTestTick()
 		return nullptr;
 	};
 
+ if (FParse::Param(FCommandLine::Get(),TEXT("CitixRoundLifecycleProbe")) && S->Phase!=ECitixChasePhase::Waiting) {
+  if (bLifecycleReceiptWritten) return;
+  auto Receipt=[&](bool Passed) {
+   bLifecycleReceiptWritten=true;
+   if (!Passed) for (ACitixRoundLifecycleProbe* Probe:LifecycleProbes) if (IsValid(Probe)) Probe->DumpState();
+   const int32 A=LifecycleProbes.IsValidIndex(0) ? LifecycleProbes[0]->VerifiedRounds() : 0;
+   const int32 B=LifecycleProbes.IsValidIndex(1) ? LifecycleProbes[1]->VerifiedRounds() : 0;
+   FFileHelper::SaveStringToFile(FString::Printf(TEXT("{\"passed\":%s,\"matches\":%d,\"driver_a_verified_rounds\":%d,\"driver_b_verified_rounds\":%d,\"uses_keyboard_input\":true,\"required_escapes\":4}"),Passed ? TEXT("true") : TEXT("false"),LifecycleCompletedMatches,A,B),*(FPaths::ProjectSavedDir()/TEXT("RoundLifecycleProbe.json")));
+   UE_LOG(LogCitix,Log,TEXT("[CitixLifecycle] result=%d matches=%d verified driver rounds=%d,%d"),Passed,LifecycleCompletedMatches,A,B);
+  };
+  if (S->Phase==ECitixChasePhase::MatchResults) {
+   ++LifecycleCompletedMatches;
+   if (LifecycleCompletedMatches==2) { Receipt(LifecycleProbes.Num()==2 && LifecycleProbes[0]->VerifiedRounds()==4 && LifecycleProbes[1]->VerifiedRounds()==4); return; }
+   const TArray<FVector> Previous=RelayLocations;
+   for (APlayerState* State:GameState->PlayerArray) BeginInteraction(Cast<AController>(State->GetOwner()));
+   if (!RelayLocations.ContainsByPredicate([&Previous](const FVector& P){return !Previous.Contains(P);})) {Receipt(false);return;}
+   LifecycleMatchSites=RelayLocations;
+   return;
+  }
+  if (World->GetTimeSeconds()>LifecycleDeadline) {Receipt(false);return;}
+  if (S->RoundNumber==1 && LifecycleMatchSites.IsEmpty()) LifecycleMatchSites=RelayLocations;
+  if (S->RoundNumber==2 && LifecycleMatchSites!=RelayLocations) {Receipt(false);return;}
+  if (S->Phase!=ECitixChasePhase::Pursuit) return;
+  if (LifecycleProbes.Num()!=2 || !LifecycleProbes[0]->IsRoundVerified() || !LifecycleProbes[1]->IsRoundVerified()) return;
+  auto* Runner=ControllerWithRole(ECitixChaseRole::Runner);
+  auto* Car=Runner ? Cast<ACitixVehiclePawn>(Runner->GetPawn()) : nullptr;
+  if (!Car) {Receipt(false);return;}
+  const FVector Target=S->bExitsUnlocked ? ExitLocations[LifecycleCompletedMatches%ExitLocations.Num()] : RelayLocations[S->CompletedRelays];
+  Car->SetActorLocation(Target,false,nullptr,ETeleportType::TeleportPhysics);
+  Car->LastDryPose=Car->GetActorTransform(); Car->bHasDryPose=true;
+  Cast<UPrimitiveComponent>(Car->GetRootComponent())->SetPhysicsLinearVelocity(FVector::ZeroVector);
+  Car->GetVehicleMovement()->Velocity=FVector::ZeroVector;
+  return;
+ }
+
+
+ // Opt-in replication fixture: exercise conceal/reveal without input-focus dependencies.
+ if(FParse::Param(FCommandLine::Get(),TEXT("CitixSmokeTrackingProbe")) && S->Phase!=ECitixChasePhase::Waiting) {
+  static TWeakObjectPtr<ACitixSmokeCloud> Cloud;static bool Passed=true;static FVector Center;
+  if(S->Phase!=ECitixChasePhase::Pursuit || ChaseTestPhase==99)return;
+  auto* Runner=ControllerWithRole(ECitixChaseRole::Runner);auto* Chaser=ControllerWithRole(ECitixChaseRole::Chaser);
+  if(!Runner || !Chaser || !Runner->GetPawn() || !Chaser->GetPawn())return;
+  if(ChaseTestPhase<200){ChaseTestPhase=200;ChaseTestTimer=0;Center=Runner->GetPawn()->GetActorLocation();
+   auto* Smoke=World->SpawnActor<ACitixSmokeCloud>(Center,FRotator::ZeroRotator);Smoke->StartedAt=World->GetTimeSeconds()-3;Smoke->CloudSeed=1;
+   const FVector CloudCenter=Center+(FParse::Param(FCommandLine::Get(),TEXT("CitixSmokeSightlineProbe")) ? FVector(7000,0,0) : FVector::ZeroVector);
+   for(int32 I=0;I<ACitixSmokeCloud::PuffCount;++I)Smoke->EmissionPositions.Add(CloudCenter);Cloud=Smoke;Smoke->ForceNetUpdate();}
+  const float Distance=ChaseTestPhase==200 ? 14000.f : ChaseTestPhase==201 ? 15000.f : ChaseTestPhase==202 ? 16000.f : 14000.f;
+  if(Cloud.IsValid())Cloud->StartedAt=World->GetTimeSeconds()-3;
+  for(AController* Driver:{Runner,Chaser}){auto* Car=Cast<ACitixVehiclePawn>(Driver->GetPawn());if(!Car)return;
+   Car->SetActorLocation(Center+(Driver==Chaser ? FVector(Distance,0,0) : FVector::ZeroVector),false,nullptr,ETeleportType::TeleportPhysics);
+   auto* Body=Cast<UPrimitiveComponent>(Car->GetRootComponent());Body->SetPhysicsLinearVelocity(FVector::ZeroVector);Car->GetVehicleMovement()->Velocity=FVector::ZeroVector;}
+  UpdateRunnerReveal();
+  if(ChaseTestTimer>2.f){Passed&=S->bRunnerRevealed==(ChaseTestPhase==201 || ChaseTestPhase==202 || ChaseTestPhase==204);
+   if(ChaseTestPhase==203 && Cloud.IsValid()){Cloud->Destroy();Cloud.Reset();}
+   if(ChaseTestPhase==204){FFileHelper::SaveStringToFile(Passed ? TEXT("{\"passed\":true,\"hidden_140m\":true,\"visible_150m\":true,\"visible_160m\":true,\"hidden_on_return\":true,\"restored_after_expiry\":true}") : TEXT("{\"passed\":false}"),*(FPaths::ProjectSavedDir()/TEXT("SmokeTrackingProbe.json")));ChaseTestPhase=99;}
+   else {++ChaseTestPhase;ChaseTestTimer=0;}}
+  return;
+ }
+ if(FParse::Param(FCommandLine::Get(),TEXT("CitixCommitmentProbe")) && S->Phase!=ECitixChasePhase::Waiting) {
+  static bool Passed=true; static float ExitAt=-1;
+  auto Finish=[&](bool Result) {FFileHelper::SaveStringToFile(Result ? TEXT("{\"passed\":true,\"speed_gate\":true,\"leave_resets_relay\":true,\"speed_resets_relay\":true,\"five_timed_relays\":true,\"leave_resets_escape\":true,\"four_second_escape\":true}") : TEXT("{\"passed\":false}"),*(FPaths::ProjectSavedDir()/TEXT("ChaseCommitmentProbe.json"))); UE_LOG(LogCitix,Log,TEXT("[CitixCommitmentProbe] %s"),Result ? TEXT("PASS") : TEXT("FAIL")); ChaseTestPhase=99;};
+  if(ChaseTestPhase==99)return;
+  if(S->Phase==ECitixChasePhase::RoundResults && ChaseTestPhase==110) {Finish(Passed && World->GetTimeSeconds()-ExitAt>=4.f); return;}
+  if(S->Phase!=ECitixChasePhase::Pursuit)return;
+  auto* Runner=ControllerWithRole(ECitixChaseRole::Runner); auto* Car=Runner ? Cast<ACitixVehiclePawn>(Runner->GetPawn()) : nullptr;
+  auto* PS=Runner ? Runner->GetPlayerState<ACitixChasePlayerState>() : nullptr; if(!Car || !PS || RelayLocations.Num()!=FCitixChaseRules::ActiveRelayCount){Finish(false);return;}
+  if(ChaseTestPhase<100){ChaseTestPhase=100;ChaseTestTimer=0;}
+  const bool AtExit=ChaseTestPhase>=107;
+  const FVector Anchor=AtExit ? ExitLocations[0] : RelayLocations[FMath::Clamp(S->CompletedRelays,0,FCitixChaseRules::RelaysRequired-1)];
+  const bool Outside=ChaseTestPhase==102 || ChaseTestPhase==108;
+  // Align the teleport fixture with the road, allowing a representative chase-camera view.
+  static FVector LastAnchor(FVector::ZeroVector); static float FixtureYaw=0;
+  if(!Anchor.Equals(LastAnchor,1.f)) {
+   float Best=MAX_flt;
+   for(TActorIterator<ACitixCityGenerator> It(World);It;++It) {const auto& Roads=It->GetRoadNetwork();
+    for(const auto& E:Roads.Edges) if(E.bDrivable) {const FVector A(Roads.Nodes[E.NodeA].Position,0),B(Roads.Nodes[E.NodeB].Position,0);const float D=FMath::PointDistToSegment(FVector(Anchor.X,Anchor.Y,0),A,B);if(D<Best){Best=D;FixtureYaw=(B-A).Rotation().Yaw;}} break;
+   }
+   LastAnchor=Anchor;
+  }
+  Car->SetActorLocationAndRotation(Anchor+(Outside ? FVector(1100,0,0) : FVector::ZeroVector),FRotator(0,FixtureYaw,0),false,nullptr,ETeleportType::TeleportPhysics);
+  const FVector Velocity=Car->GetActorForwardVector()*((ChaseTestPhase==100 || ChaseTestPhase==104) ? 70.f/.036f : 0.f);
+  Cast<UPrimitiveComponent>(Car->GetRootComponent())->SetPhysicsLinearVelocity(Velocity); Car->GetVehicleMovement()->Velocity=Velocity;
+  auto Next=[&](int32 Phase){ChaseTestPhase=Phase;ChaseTestTimer=0;};
+  if(ChaseTestPhase==100 && ChaseTestTimer>1.3f){Passed&=S->CompletedRelays==0 && !PS->bInteractionActive;Next(101);}
+  else if(ChaseTestPhase==101 && ChaseTestTimer>.4f){Passed&=PS->bInteractionActive && S->CompletedRelays==0 && PS->InteractionSecondsRemaining>0;Next(102);}
+  else if(ChaseTestPhase==102 && ChaseTestTimer>.25f){Passed&=!PS->bInteractionActive && S->CompletedRelays==0;Next(103);}
+  else if(ChaseTestPhase==103 && ChaseTestTimer>.4f){Passed&=PS->bInteractionActive && S->CompletedRelays==0;Next(104);}
+  else if(ChaseTestPhase==104 && ChaseTestTimer>.25f){Passed&=!PS->bInteractionActive && S->CompletedRelays==0;Next(105);}
+  else if(ChaseTestPhase==105 && ChaseTestTimer<.9f) Passed&=S->CompletedRelays==0;
+  else if(ChaseTestPhase==105 && S->CompletedRelays==1){Next(106);}
+  else if(ChaseTestPhase==106 && S->CompletedRelays==FCitixChaseRules::RelaysRequired){Passed&=S->bExitsUnlocked;Next(107);}
+  else if(ChaseTestPhase==107 && ChaseTestTimer>1.5f){Passed&=S->Phase==ECitixChasePhase::Pursuit && PS->bInteractionActive && PS->InteractionType==ECitixChaseInteraction::Escape && PS->InteractionSecondsRemaining>2;Next(108);}
+  else if(ChaseTestPhase==108 && ChaseTestTimer>.25f){Passed&=!PS->bInteractionActive && S->Phase==ECitixChasePhase::Pursuit;Next(109);}
+  else if(ChaseTestPhase==109){if(ExitAt<0)ExitAt=World->GetTimeSeconds(); if(ChaseTestTimer>3.5f){Passed&=S->Phase==ECitixChasePhase::Pursuit;Next(110);}}
+  if(!Passed || ChaseTestTimer>15.f){Finish(false);return;}
+  return;
+ }
+ if(FParse::Param(FCommandLine::Get(),TEXT("CitixBalanceProbe")) && S->Phase!=ECitixChasePhase::Waiting) {
+  if(S->Phase!=ECitixChasePhase::Pursuit) return;
+  static float Began=-1,BrakeAt=-1,Deadline=0; static bool Failed=false,Done=false;
+  if(Done)return;
+  auto* Chaser=Cast<ACitixDrivingPlayerController>(ControllerWithRole(ECitixChaseRole::Chaser));
+  auto* Car=Chaser ? Cast<ACitixVehiclePawn>(Chaser->GetPawn()) : nullptr;
+  auto* PS=Chaser ? Chaser->GetPlayerState<ACitixChasePlayerState>() : nullptr;
+  if(!Car || !PS)return;
+  const float Now=World->GetTimeSeconds();
+  if(Began<0) {
+   Began=Now; Failed=RelayLocations.Num()!=FCitixChaseRules::ActiveRelayCount;
+   for(int32 I=0;I<RelayLocations.Num();++I) for(int32 J=0;J<I;++J) Failed|=FVector::Dist2D(RelayLocations[I],RelayLocations[J])<17999.f;
+   Cast<UPrimitiveComponent>(Car->GetRootComponent())->SetPhysicsLinearVelocity(Car->GetActorForwardVector()*8000.f);
+   UE_LOG(LogCitix,Log,TEXT("[CitixBalanceProbe] %s six safe relays at least 180m apart"),Failed ? TEXT("FAIL") : TEXT("PASS"));
+  }
+  Failed|=!S->bRunnerRevealed;
+  if(BrakeAt<0 && PS->RapidBrakeUntil>Now) {
+   BrakeAt=Now; Deadline=PS->NextRapidBrakeAt; Failed|=PS->RapidBrakeCharges!=0;
+   UE_LOG(LogCitix,Log,TEXT("[CitixBalanceProbe] %s remote RMB consumed one charge; speed still %.1fkm/h"),Car->GetVelocity().Size2D()>100.f ? TEXT("PASS") : TEXT("FAIL"),Car->GetVelocity().Size2D()*.036f);
+   Failed|=Car->GetVelocity().Size2D()<=100.f;
+  }
+  if(BrakeAt>0 && Now-BrakeAt>.9f && Now-BrakeAt<1.1f) Failed|=Car->GetVelocity().Size2D()>500.f;
+  if(BrakeAt>0 && Now<Deadline-.1f) Failed|=PS->RapidBrakeCharges!=0;
+  if(Now-Began>35.f) {
+   Failed|=BrakeAt<0 || PS->RapidBrakeCharges!=1;
+   FFileHelper::SaveStringToFile(Failed ? TEXT("{\"passed\":false}") : TEXT("{\"passed\":true,\"six_spread_relays\":true,\"remote_rmb_brake\":true,\"gradual_stop\":true,\"twenty_second_recharge\":true,\"continuous_reveal_35_seconds\":true}"),*(FPaths::ProjectSavedDir()/TEXT("ChaseBalanceProbe.json")));
+   UE_LOG(LogCitix,Log,TEXT("[CitixBalanceProbe] %s gradual brake, 20s recharge, uninterrupted reveal for 35s"),Failed ? TEXT("FAIL") : TEXT("PASS")); Done=true;
+  }
+  return;
+ }
  if (FParse::Param(FCommandLine::Get(),TEXT("CitixIceProbe"))) { CitixIceProbeTick(this); return; }
  if (FParse::Param(FCommandLine::Get(),TEXT("CitixCountdownProbe")) && !bCountdownProbeWritten) {
   if (S->Phase==ECitixChasePhase::Countdown) {
@@ -1141,10 +1365,9 @@ void ACitixChaseGameMode::ChaseTestTick()
 			{
 				if (Runner->GetPawn())
 				{
-					Runner->GetPawn()->SetActorLocation(RelayLocations[ChaseTestRams], false, nullptr, ETeleportType::TeleportPhysics);
+					Runner->GetPawn()->SetActorLocation(RelayLocations[S->CompletedRelays], false, nullptr, ETeleportType::TeleportPhysics);
 					CompleteRelay(Runner);
-					++ChaseTestRams;
-					ChaseTestTimer = 0.f;
+					ChaseTestRams=S->CompletedRelays;
 				}
 			}
 			return;
@@ -1247,8 +1470,8 @@ void ACitixChaseGameMode::ChaseTestTick()
       UE_LOG(LogCitix,Log,TEXT("[CitixTrafficEntryTest] %s car at 10 km/h rejected, reserve retained."),!TooFast && !RunnerState->bReplacementUsed ? TEXT("PASS") : TEXT("FAIL"));
       It->PublishMotion(9.99f); const bool Entered=Driving->RequestEnterVehicle();
       const auto* Adopted=Cast<ACitixVehiclePawn>(Runner->GetPawn());
-      const bool Good=Entered && Adopted && RunnerState->bReplacementUsed && RunnerState->CharacterHealth==50 && Adopted->GetVehicleMovement()->GetHealth()==100 && It->IsActorBeingDestroyed();
-      UE_LOG(LogCitix,Log,TEXT("[CitixTrafficEntryTest] %s below-10 traffic conversion, full car, health 50, source retired."),Good ? TEXT("PASS") : TEXT("FAIL"));
+      const bool Good=Entered && Adopted && RunnerState->bReplacementUsed && RunnerState->CharacterHealth==50 && Adopted->GetVehicleMovement()->GetHealth()==50 && RunnerState->RunnerCarHits==2 && It->IsActorBeingDestroyed();
+      UE_LOG(LogCitix,Log,TEXT("[CitixTrafficEntryTest] %s below-10 traffic conversion, two-integrity car, health 50, source retired."),Good ? TEXT("PASS") : TEXT("FAIL"));
       if (!Good) ChaseTestPhase=99; ChaseTestTimer=0; return;
      }
      if (ChaseTestTimer>55) { UE_LOG(LogCitix,Error,TEXT("[CitixTrafficEntryTest] FAIL no safe parked traffic fixture.")); ChaseTestPhase=99; } return;
@@ -1267,6 +1490,12 @@ void ACitixChaseGameMode::ChaseTestTick()
 							const bool bEntered = Driving->RequestEnterVehicle();
 							UE_LOG(LogCitix, Log, TEXT("[CitixChaseTest] replacement claim attempt %d -> %s."),
 								ChaseTestAttempts, bEntered ? TEXT("entered") : TEXT("rejected"));
+							if (bEntered)
+							{
+								const bool Good = RunnerState->bReplacementUsed && RunnerState->RunnerCarHits == 2 && Car->GetVehicleMovement()->GetHealth() == 50.f;
+								UE_LOG(LogCitix, Log, TEXT("[CitixReplacementProbe] %s first replacement entry: integrity=%d hull=%.0f."), Good ? TEXT("PASS") : TEXT("FAIL"), RunnerState->RunnerCarHits, Car->GetVehicleMovement()->GetHealth());
+								ChaseTestPhase = Good ? 61 : 99; ChaseTestTimer = 0.f;
+							}
 						}
 					}
 					else if (ChaseTestAttempts > 8)
@@ -1287,8 +1516,7 @@ void ACitixChaseGameMode::ChaseTestTick()
 			{
 				if (DoRamHit(Chaser, Runner))
 				{
-					++ChaseTestRams;
-					ChaseTestTimer = 0.f;
+					ChaseTestRams=S->CompletedRelays;
 				}
 			}
 
@@ -1325,6 +1553,29 @@ void ACitixChaseGameMode::ChaseTestTick()
 		}
 		return;
 
+	case 61: // Exercise ordinary exit/re-entry without consuming the reserve twice.
+		if (ChaseTestTimer > 1.f)
+		{
+			auto* Driving = Cast<ACitixDrivingPlayerController>(ControllerWithRole(ECitixChaseRole::Runner));
+			if (Driving && Driving->RequestExitVehicle()) { ChaseTestPhase = 62; ChaseTestTimer = 0.f; }
+			else if (ChaseTestTimer > 8.f) { UE_LOG(LogCitix, Error, TEXT("[CitixReplacementProbe] FAIL replacement exit.")); ChaseTestPhase = 99; }
+		}
+		return;
+	case 62:
+		if (ChaseTestTimer > .6f)
+		{
+			auto* Driving = Cast<ACitixDrivingPlayerController>(ControllerWithRole(ECitixChaseRole::Runner));
+			if (Driving && Driving->RequestEnterVehicle())
+			{
+				auto* PS = Driving->GetPlayerState<ACitixChasePlayerState>();
+				auto* Car = Cast<ACitixVehiclePawn>(Driving->GetPawn());
+				const bool Good = PS && Car && PS->bReplacementUsed && PS->RunnerCarHits == 2 && Car->GetVehicleMovement()->GetHealth() == 50.f;
+				UE_LOG(LogCitix, Log, TEXT("[CitixReplacementProbe] %s ordinary replacement re-entry preserves two integrity."), Good ? TEXT("PASS") : TEXT("FAIL"));
+				ChaseTestPhase = Good ? 6 : 99; ChaseTestTimer = 0.f;
+			}
+			else if (ChaseTestTimer > 8.f) { UE_LOG(LogCitix, Error, TEXT("[CitixReplacementProbe] FAIL ordinary re-entry.")); ChaseTestPhase = 99; }
+		}
+		return;
 	case 50: // Boundary and protection use the same server sweep as real cars.
 		{
 			AController* Runner = ControllerWithRole(ECitixChaseRole::Runner);
@@ -1541,6 +1792,43 @@ void ACitixChaseGameMode::ChaseTestTick()
 
 void ACitixChaseGameMode::SnapChaseLocationsToRoads(const FCitixRoadNetwork& Roads)
 {
+ for(TActorIterator<ACitixCityGenerator> It(GetWorld());It;++It) if(It->bHillsideMap)
+ {
+  const auto Layout=FCitixHillsideLayout::Build();
+  SpawnLocations=Layout.Spawns; ExitLocations=Layout.Exits; ReplacementLocations=Layout.RecoveryParking;
+  auto Project=[&](TArray<FVector>& Locations)
+  {
+   for(FVector& P:Locations)
+   {
+    FTransform Surface;
+    if(!ACitixCityGenerator::ValidateChaseSurface(GetWorld(),P+FVector(0,0,100),FVector(240,110,85),0,nullptr,Surface,false)) {Locations.Reset(); return false;}
+    P=Surface.GetLocation();
+   }
+   return true;
+  };
+  ValidatedRelaySites=Layout.RelaySites;
+  if(!Project(SpawnLocations) || !Project(ExitLocations) || !Project(ReplacementLocations) || !Project(ValidatedRelaySites)) {RelayLocations.Reset(); return;}
+  RelaySelectionSeed=FMath::Rand(); FParse::Value(FCommandLine::Get(),TEXT("CitixRelaySeed="),RelaySelectionSeed);
+  RelayLocations=FCitixRelayLayout::Select(ValidatedRelaySites,RelaySelectionSeed);
+  UE_LOG(LogCitix,Log,TEXT("[CitixChase] Hillside authored chase layout: sites=%d active=%d starts=%d exits=%d recovery=%d"),ValidatedRelaySites.Num(),RelayLocations.Num(),SpawnLocations.Num(),ExitLocations.Num(),ReplacementLocations.Num());
+  return;
+ }
+ TArray<FVector> SafeRelays;
+ for(const auto& E:Roads.Edges) {
+  if(!E.bDrivable || !Roads.Nodes.IsValidIndex(E.NodeA) || !Roads.Nodes.IsValidIndex(E.NodeB)) continue;
+  const FVector2D A=Roads.Nodes[E.NodeA].Position,B=Roads.Nodes[E.NodeB].Position;
+  for(float T:{.2f,.5f,.8f}) {
+   FTransform Surface; const FVector Candidate(A+(B-A)*T,90);
+   if(!ACitixCityGenerator::ValidateChaseSurface(GetWorld(),Candidate,FVector(240,110,85),FMath::RadiansToDegrees(FMath::Atan2(B.Y-A.Y,B.X-A.X)),nullptr,Surface)) continue;
+   TArray<int32> Route;
+   if(!FCitixRouteHelper::FindRouteNodes(Roads,SpawnLocations[0],Surface.GetLocation(),Route) || Route.IsEmpty()) continue;
+   SafeRelays.Add(Surface.GetLocation());
+  }
+ }
+ int32 LayoutSeed=FMath::Rand(); FParse::Value(FCommandLine::Get(),TEXT("CitixRelaySeed="),LayoutSeed);
+ ValidatedRelaySites=SafeRelays; RelaySelectionSeed=LayoutSeed;
+ RelayLocations=FCitixRelayLayout::Select(ValidatedRelaySites,RelaySelectionSeed);
+ UE_LOG(LogCitix,Log,TEXT("[CitixRelayLayout] seed=%d safe=%d selected=%d spacing=180m"),LayoutSeed,SafeRelays.Num(),RelayLocations.Num());
 	ReplacementLocations.Reset();
 	for (const FVector& Relay : RelayLocations)
 	{
@@ -1575,7 +1863,7 @@ void ACitixChaseGameMode::SnapChaseLocationsToRoads(const FCitixRoadNetwork& Roa
 		if (Best < TNumericLimits<float>::Max()) { Location.X = BestPoint.X; Location.Y = BestPoint.Y; FTransform Pose; if (ACitixCityGenerator::ValidateChaseSurface(GetWorld(),Location,FVector(240,110,85),0,nullptr,Pose)) Location=Pose.GetLocation(); }
   else Location=FVector(TNumericLimits<float>::Max());
 	};
-	for (FVector& Location : RelayLocations) Snap(Location);
+	// Relay points were surface-validated before the spread selection.
 	for (FVector& Location : ExitLocations) Snap(Location);
 	for (FVector& Location : ReplacementLocations) Snap(Location);
 	for (FVector& Location : SpawnLocations) Snap(Location);
@@ -1614,6 +1902,13 @@ void ACitixChaseGameMode::SnapChaseLocationsToRoads(const FCitixRoadNetwork& Roa
 		if (BestScore < TNumericLimits<float>::Max()) SpawnLocations[1] = BestLocation;
 		UE_LOG(LogCitix, Log, TEXT("[CitixChase] spawn road route %.0fcm%s."), RouteLength(SpawnLocations[0], SpawnLocations[1]), BestScore < TNumericLimits<float>::Max() ? TEXT("") : TEXT(" (target band unavailable)"));
 	}
+
+ // Reproduce the exact seed-1337 spawn geometry of the first lifecycle failure.
+ // The usual EnsurePlayerStarts/ResetPlayerForRound surface checks still apply.
+ if (bChaseTest && FParse::Param(FCommandLine::Get(),TEXT("CitixLifecycleOriginalSpawns"))) {
+  SpawnLocations={FVector(-18428.21f,-23462.24f,106.f),FVector(11849.39f,-7379.87f,102.35f)};
+  UE_LOG(LogCitix,Log,TEXT("[CitixLifecycle] using original failure spawn fixtures"));
+ }
 
 	// A recovery point must be reachable on the same drivable network from a pursuit
 	// objective/exit within about 100 m. Keep candidates that satisfy that rule.
@@ -1668,4 +1963,17 @@ void ACitixChaseGameMode::FinishMatch() { ACitixChaseGameState* S = ChaseState()
 
 bool ACitixChaseGameMode::CanAcceptDriveInput() const { const ACitixChaseGameState* S = ChaseState(); return S && S->Phase == ECitixChasePhase::Pursuit; }
 
-void ACitixChaseGameMode::CancelMatch(const FString& Reason) { PendingEjections.Reset(); ACitixChaseGameState* S = ChaseState(); if (!S) return; LobbyReady.Reset(); RematchReady.Reset(); for (TPair<TWeakObjectPtr<AController>, FCitixChaseHold>& Pair : ActiveHolds) ClearHold(Pair.Key.Get(), false); ActiveHolds.Reset(); for (ACitixVehiclePawn* Car : ReplacementCars) if (Car) Car->Destroy(); ReplacementCars.Reset(); PhaseTime = 0.f; RoundNumber = 0; LastRamTime = -100.f; LastRamSource.Reset(); LastRamTarget.Reset(); bRamSeparated = true; CaptureProtectionUntil = 0.f; NextRevealAt = 0.f; RevealEndsAt = 0.f; S->Phase = ECitixChasePhase::Waiting; S->RoundNumber = 0; S->PhaseSecondsRemaining = 0.f; S->CompletedRelays = 0; S->bExitsUnlocked = false; S->bRunnerRevealed = false; S->RevealSecondsRemaining = 0.f; S->bInteractionActive = false; S->InteractionSecondsRemaining = 0.f; S->StatusText = Reason; for (APlayerState* State : GameState->PlayerArray) if (ACitixChasePlayerState* PS = Cast<ACitixChasePlayerState>(State)) { PS->bReady = false; PS->RoundsWon = 0; PS->CharacterHealth = 100.f; PS->bReplacementUsed = false; PS->RunnerCarHits = 0; PS->bInteractionActive = false; PS->InteractionSecondsRemaining = 0.f; PS->InteractionType = ECitixChaseInteraction::None; } UE_LOG(LogCitix, Log, TEXT("[CitixChase] Match cancelled: %s."), *Reason); }
+void ACitixChaseGameMode::CancelMatch(const FString& Reason) { PendingEjections.Reset(); ACitixChaseGameState* S = ChaseState(); if (!S) return; LobbyReady.Reset(); RematchReady.Reset(); for (TPair<TWeakObjectPtr<AController>, FCitixChaseHold>& Pair : ActiveHolds) ClearHold(Pair.Key.Get(), false); ActiveHolds.Reset(); for (ACitixVehiclePawn* Car : ReplacementCars) if (IsValid(Car)) Car->Destroy(); ReplacementCars.Reset(); PhaseTime = 0.f; RoundNumber = 0; LastRamTime = -100.f; LastRamSource.Reset(); LastRamTarget.Reset(); bRamSeparated = true; CaptureProtectionUntil = 0.f; S->Phase = ECitixChasePhase::Waiting; S->RoundNumber = 0; S->PhaseSecondsRemaining = 0.f; S->CompletedRelays = 0; S->bExitsUnlocked = false; S->bRunnerRevealed = false; S->RevealSecondsRemaining = 0.f; S->bInteractionActive = false; S->InteractionSecondsRemaining = 0.f; S->StatusText = Reason; for (APlayerState* State : GameState->PlayerArray) if (ACitixChasePlayerState* PS = Cast<ACitixChasePlayerState>(State)) { PS->bReady = false; PS->RoundsWon = 0; PS->CharacterHealth = 100.f; PS->bReplacementUsed = false; PS->RunnerCarHits = 0; PS->bInteractionActive = false; PS->InteractionSecondsRemaining = 0.f; PS->InteractionType = ECitixChaseInteraction::None; } UE_LOG(LogCitix, Log, TEXT("[CitixChase] Match cancelled: %s."), *Reason); }
+
+void ACitixChaseGameMode::UseChaserRapidBrake(APlayerController* Player)
+{
+ auto* PS=Player ? Player->GetPlayerState<ACitixChasePlayerState>() : nullptr;
+ auto* Car=Player ? Cast<ACitixVehiclePawn>(Player->GetPawn()) : nullptr;
+ auto* S=ChaseState();
+ if(!PS || !Car || !S || Car->IsDisplayDestroyed() || !Car->IsOccupied()
+    || !FCitixChaseRules::CanRapidBrake(PS->ChaseRole==ECitixChaseRole::Chaser,true,S->Phase==ECitixChasePhase::Pursuit,PS->RapidBrakeCharges,Car->GetVelocity().Size2D())) return;
+ const float Now=GetWorld()->GetTimeSeconds();
+ PS->RapidBrakeCharges=0; PS->NextRapidBrakeAt=Now+FCitixChaseRules::RapidBrakeRecharge; PS->RapidBrakeUntil=Now+FCitixChaseRules::RapidBrakeDuration;
+ PS->ForceNetUpdate(); S->MulticastRapidBrake(Car->GetActorLocation(),Car->GetVelocity());
+ UE_LOG(LogCitix,Log,TEXT("[CitixRapidBrake] activated speed=%.1f cooldown=20s"),Car->GetVelocity().Size2D()*.036f);
+}

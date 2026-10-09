@@ -215,6 +215,22 @@ float FCitixRoadNetwork::EdgeLength(int32 EdgeIndex) const
 	return FVector2D::Distance(Nodes[Edge.NodeA].Position, Nodes[Edge.NodeB].Position);
 }
 
+FVector FCitixRoadNetwork::EdgePoint3D(int32 EdgeIndex, float Fraction) const
+{
+ if(!IsValidEdge(EdgeIndex)) return FVector::ZeroVector;
+ const auto& Edge=Edges[EdgeIndex];
+ if(!IsValidNode(Edge.NodeA) || !IsValidNode(Edge.NodeB)) return FVector::ZeroVector;
+ const auto& A=Nodes[Edge.NodeA]; const auto& B=Nodes[Edge.NodeB];
+ const float T=FMath::IsFinite(Fraction) ? FMath::Clamp(Fraction,0.f,1.f) : 0.f;
+ return FMath::Lerp(FVector(A.Position,A.Elevation),FVector(B.Position,B.Elevation),T);
+}
+
+FVector FCitixRoadNetwork::EdgeTangent3D(int32 EdgeIndex) const
+{
+ const FVector Direction=(EdgePoint3D(EdgeIndex,1.f)-EdgePoint3D(EdgeIndex,0.f)).GetSafeNormal();
+ return Direction.IsNearlyZero() ? FVector::ForwardVector : Direction;
+}
+
 FVector2D FCitixRoadNetwork::EdgeDirection(int32 EdgeIndex) const
 {
 	if (!IsValidEdge(EdgeIndex))
@@ -223,4 +239,70 @@ FVector2D FCitixRoadNetwork::EdgeDirection(int32 EdgeIndex) const
 	}
 	const FCitixRoadEdge& Edge = Edges[EdgeIndex];
 	return (Nodes[Edge.NodeB].Position - Nodes[Edge.NodeA].Position).GetSafeNormal();
+}
+
+bool FCitixRoadNetwork::FindSurfaceHeight(const FVector2D& Point, float& Height, float& Distance) const
+{
+ Height=0.f; Distance=MAX_flt;
+ if(Point.ContainsNaN()) return false;
+ bool Found=false;
+ for(int32 Index=0;Index<Edges.Num();++Index)
+ {
+  const auto& Edge=Edges[Index];
+  if(!Edge.bDrivable || !IsValidNode(Edge.NodeA) || !IsValidNode(Edge.NodeB)) continue;
+  const FVector2D A=Nodes[Edge.NodeA].Position,AB=Nodes[Edge.NodeB].Position-A;
+  const double LengthSquared=AB.SizeSquared();
+  if(LengthSquared<=SMALL_NUMBER) continue;
+  const float T=FMath::Clamp(FVector2D::DotProduct(Point-A,AB)/LengthSquared,0.,1.);
+  const float Candidate=FVector2D::Distance(Point,A+T*AB);
+  if(Candidate>=Distance) continue;
+  Found=true; Distance=Candidate; Height=EdgePoint3D(Index,T).Z;
+ }
+ return Found;
+}
+
+FTransform FCitixRoadNetwork::EdgeSurfacePose(int32 EdgeIndex,const FVector2D& Point,float Yaw) const
+{
+ if(!IsValidEdge(EdgeIndex) || Point.ContainsNaN() || !FMath::IsFinite(Yaw)) return FTransform::Identity;
+ const auto& Edge=Edges[EdgeIndex];
+ if(!IsValidNode(Edge.NodeA) || !IsValidNode(Edge.NodeB)) return FTransform::Identity;
+ const FVector2D A=Nodes[Edge.NodeA].Position,Delta=Nodes[Edge.NodeB].Position-A;
+ const double LengthSquared=Delta.SizeSquared();
+ if(LengthSquared<=SMALL_NUMBER) return FTransform(FRotator(0,Yaw,0),FVector(Point,Nodes[Edge.NodeA].Elevation));
+ const float T=FVector2D::DotProduct(Point-A,Delta)/LengthSquared;
+ const float Height=FMath::Lerp(Nodes[Edge.NodeA].Elevation,Nodes[Edge.NodeB].Elevation,T);
+ const FVector Heading=FRotator(0,Yaw,0).Vector();
+ const float Grade=(Nodes[Edge.NodeB].Elevation-Nodes[Edge.NodeA].Elevation)*FVector2D::DotProduct(FVector2D(Heading),Delta)/LengthSquared;
+ return FTransform(FRotator(FMath::RadiansToDegrees(FMath::Atan(Grade)),Yaw,0),FVector(Point,Height));
+}
+
+FCitixRoadSpec FCitixRoadNetwork::GetTrafficRoadSpec(int32 EdgeIndex) const
+{
+ if(!IsValidEdge(EdgeIndex)) return FCitixRoadSpec();
+ const auto& Edge=Edges[EdgeIndex];
+ auto Spec=UCitixCitySettings::Get().GetRoadSpec(Edge.RoadClass);
+ if(Edge.SurfaceWidth>0.f)
+ {
+  Spec.NumLanes=2; Spec.LaneWidth=FMath::Max(250.f,(Edge.SurfaceWidth-500.f)*.5f);
+  Spec.MedianWidth=0; Spec.SidewalkWidth=0;
+ }
+ return Spec;
+}
+
+uint32 FCitixRoadNetwork::GetLayoutHash(int32 MapRevision) const
+{
+ uint32 Hash=HashCombine(GetTypeHash(CitySize),HashCombine(GetTypeHash(Nodes.Num()),GetTypeHash(Edges.Num())));
+ auto Value=[&](auto V){Hash=HashCombine(Hash,GetTypeHash(V));};
+ // Centimetre precision keeps identity stable across harmless float roundoff.
+ for(const auto& Node:Nodes)
+ {
+  Value(FMath::RoundToInt(Node.Position.X)); Value(FMath::RoundToInt(Node.Position.Y)); Value(FMath::RoundToInt(Node.Elevation));
+ }
+ for(const auto& Edge:Edges)
+ {
+  Value(Edge.NodeA); Value(Edge.NodeB); Value(uint8(Edge.RoadClass));
+  Value(FMath::RoundToInt(Edge.CorridorWidth)); Value(FMath::RoundToInt(Edge.SurfaceWidth));
+  Value(Edge.bDrivable); Value(Edge.bBridge);
+ }
+ return HashCombine(Hash,GetTypeHash(MapRevision));
 }

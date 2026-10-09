@@ -121,3 +121,35 @@ void ACitixHitSpark::SpawnPursuitPulse(UWorld* World,const FVector& Location,con
   Pixel->SetLifeSpan(.65f);
  }
 }
+
+void ACitixHitSpark::SpawnRelaySprinkles(UWorld* World,const FVector& Location,const FVector& Velocity)
+{
+ if(!World || World->GetNetMode()==NM_DedicatedServer) return;
+ // Bounded event burst, using the existing shrinking low-poly spark animation.
+ for(int32 I=0;I<24;++I) if(auto* Spark=World->SpawnActor<ACitixHitSpark>()) {
+  const float Angle=I*2.f*PI/24.f;
+  const FVector Radial(FMath::Cos(Angle),FMath::Sin(Angle),0);
+  Spark->Fire(Location+Radial*FMath::FRandRange(65.f,160.f)+FVector(0,0,FMath::FRandRange(20.f,95.f)),
+   Velocity*.45f+Radial*FMath::FRandRange(90.f,230.f)+FVector(0,0,FMath::FRandRange(140.f,320.f)),ECitixSurface::EmissiveCool);
+  Spark->PixelScale=FMath::FRandRange(.025f,.055f); Spark->ShapeScale=FVector(.7f,.7f,1.6f);
+  Spark->Life=FMath::FRandRange(.65f,1.f); Spark->Gravity=380.f; Spark->Spin=FMath::VRand()*180.f;
+  Spark->SparkMesh->SetMaterial(0,FCitixSurfaceLibrary::GetTintedEmissiveMaterial(I%4==0 ? FLinearColor(.5f,.9f,1.f) : FLinearColor(.03f,.4f,1.f)));
+  Spark->SparkMesh->SetRelativeScale3D(Spark->ShapeScale*Spark->PixelScale);
+  Spark->SetLifeSpan(Spark->Life+.1f);
+ }
+}
+
+void ACitixHitSpark::SpawnRapidBrake(UWorld* World,const FVector& Location,const FVector& Velocity)
+{
+ if(!World || World->GetNetMode()==NM_DedicatedServer) return;
+ const FVector Forward=Velocity.GetSafeNormal2D(),Side(-Forward.Y,Forward.X,0);
+ for(int32 I=0;I<16;++I) if(auto* Spark=World->SpawnActor<ACitixHitSpark>()) {
+  const float Sign=I%2 ? 1.f : -1.f;
+  Spark->Fire(Location+Side*Sign*100+Forward*(I<8 ? 125.f : -125.f)-FVector(0,0,45),
+   Velocity*.12f-Forward*FMath::FRandRange(150.f,400.f)+Side*Sign*FMath::FRandRange(60.f,180.f)+FVector(0,0,40),ECitixSurface::EmissiveCool);
+  Spark->PixelScale=.035f; Spark->ShapeScale=FVector(7.f,.8f,.8f); Spark->Life=.55f; Spark->Gravity=100.f;
+  Spark->SetActorRotation(Forward.Rotation());
+  Spark->SparkMesh->SetMaterial(0,FCitixSurfaceLibrary::GetTintedEmissiveMaterial(I%4==0 ? FLinearColor(.8f,.9f,1.f) : FLinearColor(.15f,.55f,1.f)));
+  Spark->SparkMesh->SetRelativeScale3D(Spark->ShapeScale*Spark->PixelScale); Spark->SetLifeSpan(.65f);
+ }
+}

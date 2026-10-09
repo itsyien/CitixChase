@@ -14,6 +14,9 @@ public:
  // Citix owns the wider range; Unreal's standard setter clamps at 100%.
  void SetResolutionScaleValueEx(float Percentage);
  void SetFPSDetent(int32 Detent);
+ float GetMasterVolumePercent() const;
+ void SetMasterVolumePercent(float Percentage,const UObject* WorldContext);
+ void ApplyAudioSettings(const UObject* WorldContext) const;
  float EffectiveResolutionScale() const;
  int32 FPSDetent() const;
  static float FPSForDetent(int32 Detent);
@@ -27,6 +30,8 @@ public:
  UPROPERTY(Config) int32 RecommendedPreset=2;
  UPROPERTY(Config) int32 ManualPreset=-1;
  UPROPERTY(Config) float ManualResolutionScale=-1.f;
+ // Local GameUserSettings only: never replicated or included in match state.
+ UPROPERTY(Config) float MasterVolumePercent=100.f;
 private:
  void ApplyPreset();
  void ApplySceneScale();

@@ -224,12 +224,14 @@ void UCitixVehicleMovementComponent::TickComponent(float DeltaTime, ELevelTick T
 
 
 	// Resolve the lock in PrePhysics, before any input can produce force on either peer.
- bIceFrozen=false;
+ bIceFrozen=false; bRapidBraking=false;
  if (auto* Car=Cast<ACitixVehiclePawn>(GetOwner())) {
   const auto* S=GetWorld()->GetGameState<ACitixChaseGameState>();
   const AController* Driver=Car->GetOwningController();
   const auto* PS=Driver ? Driver->GetPlayerState<ACitixChasePlayerState>() : Car->GetPlayerState<ACitixChasePlayerState>();
   bIceFrozen=S && PS && S->Phase==ECitixChasePhase::Pursuit && PS->FrozenUntil>S->GetServerWorldTimeSeconds();
+  bRapidBraking=S && PS && S->Phase==ECitixChasePhase::Pursuit && PS->ChaseRole==ECitixChaseRole::Chaser && PS->RapidBrakeUntil>S->GetServerWorldTimeSeconds();
+  if(bRapidBraking) {Body->SetPhysicsLinearVelocity(FCitixChaseRules::RapidBrakeVelocity(Body->GetPhysicsLinearVelocity(),DeltaTime)); bBoostActive=false;}
   if (bIceFrozen) {
    FVector V=Body->GetPhysicsLinearVelocity(); const float Speed=V.Size2D();
    if (Speed>PS->FrozenSpeedLimit && Speed>0) { const float Scale=PS->FrozenSpeedLimit/Speed; V.X*=Scale; V.Y*=Scale; Body->SetPhysicsLinearVelocity(V); }
@@ -250,8 +252,8 @@ void UCitixVehicleMovementComponent::TickComponent(float DeltaTime, ELevelTick T
  }
 
  // --- Boost reserve ---------------------------------------------------
-	const bool bWantsBoost = bBoostInput && !bDestroyed && !bIceFrozen;
-	if (bChaseBreakawayBoost && !bDestroyed && !bIceFrozen)
+	const bool bWantsBoost = bBoostInput && !bDestroyed && !bIceFrozen && !bRapidBraking;
+	if (bChaseBreakawayBoost && !bDestroyed && !bIceFrozen && !bRapidBraking)
 	{
 		bBoostActive = true; // Station power is free and does not consume the driver's reserve.
 		BoostRegenTimer = 0.f;
@@ -319,7 +321,7 @@ void UCitixVehicleMovementComponent::ApplySuspensionAndTires(float DeltaTime, UP
 	// --- Handbrake: drive is cut ----------------------------------------
 	// Holding the handbrake kills engine drive (HandbrakeEngineForceScale, 0 by default),
 	// so a drift can never accelerate. It is a brake, not a boost.
-	const float EngineForceScale = bIceFrozen ? 0.f : bHandbrake ? HandbrakeEngineForceScale : 1.f;
+	const float EngineForceScale = (bIceFrozen || bRapidBraking) ? 0.f : bHandbrake ? HandbrakeEngineForceScale : 1.f;
 
 	// Boost raises both the top speed and the engine force.
 	const float EffectiveMaxSpeed = MaxSpeed * (bBoostActive ? BoostSpeedMultiplier : 1.f);
@@ -334,7 +336,7 @@ void UCitixVehicleMovementComponent::ApplySuspensionAndTires(float DeltaTime, UP
 	// once the player releases the steering keys.
 	const float SteerRate = (FMath::Abs(TargetSteer) >= FMath::Abs(CurrentSteerAngle))
 		? SteerInterpSpeed : SteerReturnSpeed;
-	const bool bProgressiveDrift=bHandbrake && !bIceFrozen && DriftYawRateDegrees>0.f;
+	const bool bProgressiveDrift=bHandbrake && !bIceFrozen && !bRapidBraking && DriftYawRateDegrees>0.f;
 	if (bProgressiveDrift) {
 		const float Rate=FMath::Abs(SteeringInput)>.05f ? 8.f : SteerReturnSpeed;
 		CurrentSteerAngle=FMath::Lerp(CurrentSteerAngle,TargetSteer,1.f-FMath::Exp(-Rate*DeltaTime));
@@ -521,7 +523,7 @@ void UCitixVehicleMovementComponent::ApplyGroundedDriftResponse(float DeltaTime,
 	const float ForwardSpeed = FVector::DotProduct(PlanarVelocity, Nose);
 	// Fresh contacts are essential: last frame's grounded flag would assist the
 	// first airborne frame after a ramp. Frozen/destroyed vehicles keep their rules.
-	const bool bCanAssist = NumGroundedWheels >= 2 && !bIceFrozen && !bDestroyed
+	const bool bCanAssist = NumGroundedWheels >= 2 && !bIceFrozen && !bRapidBraking && !bDestroyed
 		&& DriftYawRateDegrees > 0.f && DeltaTime > 0.f
 		&& Body.GetUpVector().Z > .5f && ForwardSpeed > 500.f;
 	if (!bCanAssist)

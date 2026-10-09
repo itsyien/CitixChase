@@ -285,6 +285,7 @@ void ACitixTrafficSystem::RefreshParkedVehicles(const FVector2D& PlayerXY)
 		bool bFound = false;
 		FVector2D SlotLocation = FVector2D::ZeroVector;
 		float SlotYaw = 0.f;
+		int32 SlotEdge = INDEX_NONE;
 
 		for (int32 Attempt = 0; Attempt < 24 && !bFound; ++Attempt)
 		{
@@ -300,7 +301,7 @@ void ACitixTrafficSystem::RefreshParkedVehicles(const FVector2D& PlayerXY)
 				continue;
 			}
 
-			const FCitixRoadSpec Spec = UCitixCitySettings::Get().GetRoadSpec(Edge.RoadClass);
+			const FCitixRoadSpec Spec = Network.GetTrafficRoadSpec(EdgeIndex);
 			if (Spec.CarriagewayWidth() < 400.f)
 			{
 				continue;
@@ -314,7 +315,7 @@ void ACitixTrafficSystem::RefreshParkedVehicles(const FVector2D& PlayerXY)
 			const FVector2D Origin = bForward ? A : B;
 			const float Distance = Rng.FRandRange(300.f, FMath::Max(400.f, Network.EdgeLength(EdgeIndex) - 300.f));
 			const FVector2D Right(-Travel.Y, Travel.X);
-			const float KerbOffset = Spec.CarriagewayWidth() * 0.5f - 130.f;
+			const float KerbOffset = (Edge.SurfaceWidth>0.f ? Edge.SurfaceWidth : Spec.CarriagewayWidth()) * 0.5f - 130.f;
 			const FVector2D Candidate = Origin + Travel * Distance + Right * KerbOffset;
 
 			if (static_cast<float>(FVector2D::Distance(Candidate, PlayerXY)) > ParkedRadius)
@@ -331,6 +332,7 @@ void ACitixTrafficSystem::RefreshParkedVehicles(const FVector2D& PlayerXY)
 			}
 
 			SlotLocation = Candidate;
+			SlotEdge = EdgeIndex;
 			SlotYaw = FMath::RadiansToDegrees(FMath::Atan2(Travel.Y, Travel.X));
 			bFound = true;
 		}
@@ -344,10 +346,13 @@ void ACitixTrafficSystem::RefreshParkedVehicles(const FVector2D& PlayerXY)
 			continue;
 		}
 
-		Vehicle->SetVehicleVisible(true);
 		Vehicle->SetWheelsVisible(true);
-		Vehicle->SetActorLocationAndRotation(FVector(SlotLocation.X, SlotLocation.Y, 0.f),
-			FRotator(0.f, SlotYaw, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
+		const FTransform SlotPose=Network.EdgeSurfacePose(SlotEdge,SlotLocation,SlotYaw);
+		Vehicle->SetActorLocationAndRotation(SlotPose.GetLocation(),SlotPose.Rotator(), false, nullptr, ETeleportType::TeleportPhysics);
+  // Activate only after placement so the replicated lifecycle never exposes
+  // a recycled car (or its collider) at the previous pool location.
+  Vehicle->SetVehicleVisible(true);
+  Vehicle->PublishMotion(0.f);
 		++Relocated;
 	}
 
@@ -440,13 +445,15 @@ bool ACitixTrafficSystem::IsOutOfAllViews(const FVector2D& Point, float FarDista
 bool ACitixTrafficSystem::IsVisibleToAny(const FVector2D& XY, float Z) const
 {
 	UWorld* World = GetWorld();
+	float RoadHeight=0.f, RoadDistance=0.f;
+	Network.FindSurfaceHeight(XY,RoadHeight,RoadDistance);
 	for (const FCitixDriverAnchor& Anchor : DriverAnchors)
 	{
 		if (!Anchor.View.bValid)
 		{
 			return true;
 		}
-		if (FCitixVisibility::IsVisible(World, Anchor.View, FVector(XY.X, XY.Y, Z),
+		if (FCitixVisibility::IsVisible(World, Anchor.View, FVector(XY.X, XY.Y, RoadHeight+Z),
 			Anchor.Pawn.Get()))
 		{
 			return true;
@@ -800,7 +807,7 @@ bool ACitixTrafficSystem::TrySpawnAgent(const FVector2D& PlayerXY)
 			continue;
 		}
 
-		const FCitixRoadSpec Spec = UCitixCitySettings::Get().GetRoadSpec(Edge.RoadClass);
+		const FCitixRoadSpec Spec = Network.GetTrafficRoadSpec(EdgeIndex);
 		const int32 HalfLanes = FMath::Max(1, Spec.NumLanes / 2);
 		const int32 Lane = Rng.RandRange(0, HalfLanes - 1);
 		const bool bForward = Rng.FRand() < 0.5f;
@@ -874,7 +881,7 @@ bool ACitixTrafficSystem::TrySpawnAgent(const FVector2D& PlayerXY)
 		return false;
 	}
 
-	const FCitixRoadSpec Spec = UCitixCitySettings::Get().GetRoadSpec(Network.Edges[BestEdge].RoadClass);
+	const FCitixRoadSpec Spec = Network.GetTrafficRoadSpec(BestEdge);
 
 	FCitixTrafficAgent Agent;
 	Agent.EdgeIndex = BestEdge;
@@ -898,7 +905,7 @@ bool ACitixTrafficSystem::TrySpawnAgent(const FVector2D& PlayerXY)
 	}
 	Agent.DiagYaw = Agent.CurrentYaw;
 	Agent.DiagMoveYaw = Agent.CurrentYaw;
-	Agent.SmoothedLocation = FVector(BestLocation.X, BestLocation.Y, 0.f);
+	Agent.SmoothedLocation = Network.EdgeSurfacePose(BestEdge,BestLocation,Agent.CurrentYaw).GetLocation();
 	Agent.bPresentationStarted = true;
 	ChoosePlanForAgent(Agent);
 
@@ -1124,7 +1131,7 @@ bool ACitixTrafficSystem::IsEdgeEntryBlocked(int32 EdgeIndex, bool bForward, int
 	}
 
 	// The lane this car would end up in on that edge, which is its current lane clamped.
-	const FCitixRoadSpec Spec = UCitixCitySettings::Get().GetRoadSpec(Network.Edges[EdgeIndex].RoadClass);
+	const FCitixRoadSpec Spec = Network.GetTrafficRoadSpec(EdgeIndex);
 	const int32 EntryLane = FMath::Clamp(Lane, 0, FMath::Max(0, Spec.NumLanes / 2 - 1));
 	const float EdgeLength = Network.EdgeLength(EdgeIndex);
 
@@ -1273,7 +1280,7 @@ void ACitixTrafficSystem::ComputeLookAhead(int32 AgentIndex, FTrafficAhead& Out)
 		// which is exactly what the car does when it crosses. Comparing against that (rather
 		// than the current lane) is what stops a car from driving into one that is already
 		// sitting in the lane it is about to occupy.
-		const FCitixRoadSpec HopSpec = UCitixCitySettings::Get().GetRoadSpec(Network.Edges[EdgeIndex].RoadClass);
+		const FCitixRoadSpec HopSpec = Network.GetTrafficRoadSpec(EdgeIndex);
 		const int32 HopHalfLanes = FMath::Max(1, HopSpec.NumLanes / 2);
 		const int32 HopLane = FMath::Clamp(Self.Lane, 0, HopHalfLanes - 1);
 
@@ -1642,7 +1649,7 @@ void ACitixTrafficSystem::UpdateAgents(float DeltaSeconds)
 			// Keep the lane instead of drawing a new one at every junction. Jumping lane
 			// mid-block made cars weave for no reason and broke the following model
 			// across edges (cars could no longer see who was in front of them).
-			const FCitixRoadSpec Spec = UCitixCitySettings::Get().GetRoadSpec(Network.Edges[NextEdge].RoadClass);
+			const FCitixRoadSpec Spec = Network.GetTrafficRoadSpec(NextEdge);
 			const int32 HalfLanes = FMath::Max(1, Spec.NumLanes / 2);
 			Agent.Lane = FMath::Clamp(Agent.Lane, 0, HalfLanes - 1);
 			Agent.LaneOffset = Spec.LaneWidth * (0.5f + static_cast<float>(Agent.Lane));
@@ -1696,8 +1703,7 @@ void ACitixTrafficSystem::UpdateAgents(float DeltaSeconds)
 			FVector2D TargetOffset = EdgeRight(Agent.EdgeIndex, Agent.bForward) * Agent.LaneOffset;
 			if (Network.IsValidEdge(Agent.NextEdgeIndex) && Agent.NextEdgeIndex != Agent.EdgeIndex)
 			{
-				const FCitixRoadSpec NextSpec = UCitixCitySettings::Get().GetRoadSpec(
-					Network.Edges[Agent.NextEdgeIndex].RoadClass);
+				const FCitixRoadSpec NextSpec = Network.GetTrafficRoadSpec(Agent.NextEdgeIndex);
 				const int32 NextLane = FMath::Clamp(Agent.Lane, 0,
 					FMath::Max(0, NextSpec.NumLanes / 2 - 1));
 				const float NextLaneOffset = NextSpec.LaneWidth * (0.5f + static_cast<float>(NextLane));
@@ -1768,7 +1774,7 @@ void ACitixTrafficSystem::UpdateAgents(float DeltaSeconds)
 				}
 			}
 
-			const FVector TargetLocation(PresentedTarget.X, PresentedTarget.Y, 0.f);
+			const FVector TargetLocation=Network.EdgeSurfacePose(Agent.EdgeIndex,PresentedTarget,Agent.CurrentYaw).GetLocation();
 			Agent.SmoothedLocation = Agent.bPresentationStarted
 				? FMath::VInterpTo(Agent.SmoothedLocation, TargetLocation, DeltaSeconds, PositionInterpSpeed)
 				: TargetLocation;
@@ -1806,12 +1812,14 @@ void ACitixTrafficSystem::UpdateAgents(float DeltaSeconds)
 				: 0.f;
 
 			ACitixTrafficVehicle* Vehicle = Pool[Agent.PoolIndex];
-			Vehicle->SetVehicleVisible(true);
+			const FTransform SurfacePose=Network.EdgeSurfacePose(Agent.EdgeIndex,FVector2D(Agent.SmoothedLocation),Agent.CurrentYaw);
+			Agent.SmoothedLocation.Z=SurfacePose.GetLocation().Z;
 			const FVector PreviousVehicleLocation = Vehicle->GetActorLocation();
 			Vehicle->SetActorLocationAndRotation(
 				Agent.SmoothedLocation,
-				FRotator(0.f, Agent.CurrentYaw, 0.f),
+				SurfacePose.Rotator(),
 				false, nullptr, ETeleportType::None);
+   Vehicle->SetVehicleVisible(true);
 			if (ACitixChaseGameMode* Chase = GetWorld()->GetAuthGameMode<ACitixChaseGameMode>())
 				Chase->TryRunOver(Vehicle, PreviousVehicleLocation, Agent.SmoothedLocation, Agent.Speed*.036f);
    Vehicle->PublishMotion(Agent.Speed*.036f);

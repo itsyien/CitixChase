@@ -6,6 +6,30 @@
 #include "Components/SceneComponent.h"
 #include "Core/CitixSurfaceLibrary.h"
 #include "Citix.h"
+#include "Core/CitixGraphicsSettings.h"
+#include "HAL/IConsoleManager.h"
+
+FVector2D ACitixCityChunk::DetailDrawDistance(int32 Preset) {
+ const FVector2D Ranges[]={FVector2D(22000,30000),FVector2D(35000,50000),FVector2D(60000,85000),FVector2D(100000,140000)};
+ return Ranges[FMath::Clamp(Preset,0,3)];
+}
+namespace {
+ bool IsDistanceDetail(ECitixSurface Surface) {
+  return Surface==ECitixSurface::Bush || Surface==ECitixSurface::Foliage || Surface==ECitixSurface::Trunk || Surface==ECitixSurface::PropMetal || Surface==ECitixSurface::PropDark || Surface==ECitixSurface::Pole || Surface==ECitixSurface::Lamp;
+ }
+ void ApplyDetailRange(UHierarchicalInstancedStaticMeshComponent* Comp,int32 Preset) {
+  const auto Range=ACitixCityChunk::DetailDrawDistance(Preset);
+  const auto* Scale=IConsoleManager::Get().FindConsoleVariable(TEXT("r.ViewDistanceScale"));
+  const float ViewScale=Scale ? FMath::Max(.01f,Scale->GetFloat()) : 1.f;
+  // HISM applies the global view scale again. Normalize here so the preset's
+  // explicit world distance remains predictable, especially on Low.
+  Comp->SetCullDistances(FMath::RoundToInt(Range.X/ViewScale),FMath::RoundToInt(Range.Y/ViewScale));
+  const float LODScales[]={1.f,2.f,5.f,8.f}; Comp->SetLODDistanceScale(LODScales[FMath::Clamp(Preset,0,3)]);
+ }
+}
+void ACitixCityChunk::RefreshDetailDrawDistance(int32 Preset) {
+ for(auto& Entry:SurfaceComponents) if(IsDistanceDetail(Entry.Key) && Entry.Value) ApplyDetailRange(Entry.Value,Preset);
+}
 
 ACitixCityChunk::ACitixCityChunk()
 {
@@ -119,30 +143,14 @@ UHierarchicalInstancedStaticMeshComponent* ACitixCityChunk::GetOrCreateComponent
 	Comp->SetCanEverAffectNavigation(false);
 	Comp->SetCastShadow(FCitixSurfaceLibrary::CastsShadow(Surface));
 
-	// Distance culling. Small, dense detail (props, foliage, street furniture) is not
-	// readable from far away, so it stops drawing entirely; big surfaces and the lit
-	// window bands are never culled because they carry the skyline.
-	{
-		float CullStart = 0.f;
-		float CullEnd = 0.f;
-		switch (Surface)
-		{
-		case ECitixSurface::Foliage:
-		case ECitixSurface::Trunk:      CullStart = 20000.f; CullEnd = 32000.f; break;
-		case ECitixSurface::Bush:      CullStart = 10000.f; CullEnd = 18000.f; break;
-		case ECitixSurface::PropMetal:
-		case ECitixSurface::PropDark:   CullStart = 22000.f; CullEnd = 34000.f; break;
-		case ECitixSurface::Pole:       CullStart = 32000.f; CullEnd = 48000.f; break;
-		case ECitixSurface::Lamp:       CullStart = 40000.f; CullEnd = 60000.f; break;
-		default: break;
-		}
-		if (CullEnd > 0.f)
-		{
-			Comp->SetCullDistances(FMath::RoundToInt(CullStart), FMath::RoundToInt(CullEnd));
-		}
-	}
+ // Small detail respects a world-distance floor even when Low scales other scenery.
+ Comp->bEnableDensityScaling=false;
+ if(IsDistanceDetail(Surface)) {
+  const auto* Settings=UCitixGraphicsSettings::Get(); ApplyDetailRange(Comp,Settings ? Settings->EffectivePreset() : 2);
+ }
 
 	if (Surface==ECitixSurface::Bush) {
+
 		Comp->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 		Comp->SetCollisionObjectType(ECC_GameTraceChannel2);
 		Comp->SetCollisionResponseToAllChannels(ECR_Ignore);

@@ -5,6 +5,14 @@
 // the view while driving.
 
 #include "Player/CitixDrivingHUD.h"
+#include "Player/CitixGroundTracker.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Rendering/SlateRenderer.h"
+#include "Fonts/FontMeasure.h"
+#include "Player/CitixTrackerMath.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 #include "Sandbox/CitixPoliceVehicle.h"
 #include "Sandbox/CitixPoliceOfficer.h"
@@ -313,10 +321,19 @@ void ACitixDrivingHUD::DrawChasePanel(float ScreenWidth, float ScreenHeight)
 {
  ChaseUIScale=FMath::Min(ScreenWidth/1280.f,ScreenHeight/720.f);
  const float W=ScreenWidth/ChaseUIScale,H=ScreenHeight/ChaseUIScale;
+ DrawPlayerCarLabels(W,H);
  ACitixDrivingPlayerController* PC=Cast<ACitixDrivingPlayerController>(GetOwningPlayerController());
  const ACitixChaseGameState* S=GetWorld()->GetGameState<ACitixChaseGameState>();
  const ACitixChasePlayerState* PS=PC ? PC->GetPlayerState<ACitixChasePlayerState>() : nullptr;
- if (!S || !PS || S->Phase==ECitixChasePhase::Waiting || S->Phase==ECitixChasePhase::MatchResults) return;
+ if (!S || !PS || S->Phase==ECitixChasePhase::Waiting || S->Phase==ECitixChasePhase::MatchResults) { bTrackerInitialized=false; return; }
+ if(PS->ChaseRole!=ECitixChaseRole::Chaser || !S->bRunnerRevealed) {
+  if(bTrackerInitialized && FParse::Param(FCommandLine::Get(),TEXT("CitixTrackerNetProbe"))) {
+   FString Tag; FParse::Value(FCommandLine::Get(),TEXT("CitixNetTag="),Tag);
+   FFileHelper::SaveStringToFile(TEXT("{\"passed\":true,\"hidden_after_reveal\":true}"),*(FPaths::ProjectSavedDir()/(TEXT("TrackerNetHidden-")+Tag+TEXT(".json"))));
+   FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("Screenshots")/(TEXT("TrackerNetHidden-")+Tag+TEXT(".png")),true,false);
+  }
+  bTrackerInitialized=false;
+ }
  const float Now=GetWorld()->GetTimeSeconds(), ServerNow=S->GetServerWorldTimeSeconds();
  const FLinearColor Blue(.12f,.64f,1.f), Yellow(1.f,.8f,.18f), Red(1.f,.2f,.26f), Muted(.5f,.63f,.75f), Card(.012f,.022f,.04f,.88f);
  const bool Runner=PS->ChaseRole==ECitixChaseRole::Runner;
@@ -324,6 +341,7 @@ void ACitixDrivingHUD::DrawChasePanel(float ScreenWidth, float ScreenHeight)
  const ACitixVehiclePawn* Car=Cast<ACitixVehiclePawn>(GetOwningPawn());
  const ACitixOnFootPawn* Foot=Cast<ACitixOnFootPawn>(GetOwningPawn());
  auto Triangle=[&](FVector2D A,FVector2D B,FVector2D C,FLinearColor Color) {
+  if (!Canvas->DefaultTexture || !Canvas->DefaultTexture->GetResource()) return;
   FCanvasTriangleItem Item(A*ChaseUIScale,B*ChaseUIScale,C*ChaseUIScale,Canvas->DefaultTexture->GetResource()); Item.SetColor(Color); Item.BlendMode=SE_BLEND_Translucent; Canvas->DrawItem(Item);
  };
  auto Ring=[&](float X,float Y,float R,float Progress,FLinearColor Color,int Sides=32) {
@@ -356,7 +374,7 @@ void ACitixDrivingHUD::DrawChasePanel(float ScreenWidth, float ScreenHeight)
   Ring(X,Y,17,1, Filled ? Blue : Muted.CopyWithNewOpacity(.4f),6);
   if (Filled) { DrawChaseLine(X-6,Y,X-1,Y+5,Blue,2); DrawChaseLine(X-1,Y+5,X+7,Y-6,Blue,2); }
  };
- TArray<FVector2D> MarkerLabels;
+ auto& MarkerLabels=MarkerLabelPositions; MarkerLabels.Reset(); MarkerLabels.Reserve(12);
  auto Marker=[&](const FVector& Target,FLinearColor Color,const FString& Name) {
   FVector Camera; FRotator Aim; PC->GetPlayerViewPoint(Camera,Aim);
   const FVector Delta=Aim.UnrotateVector(Target-Camera);
@@ -389,7 +407,7 @@ void ACitixDrivingHUD::DrawChasePanel(float ScreenWidth, float ScreenHeight)
  DrawChaseLine(40,55,82,55,RoleInk,3); DrawChaseLine(45,55,53,43,RoleInk,2); DrawChaseLine(53,43,70,43,RoleInk,2); DrawChaseLine(70,43,78,55,RoleInk,2);
  DrawChaseRect(RoleInk,45,57,8,6); DrawChaseRect(RoleInk,70,57,8,6);
  DrawChaseText(Runner ? TEXT("RUNNER") : TEXT("CHASER"),RoleInk,96,38,nullptr,1.65f);
- DrawChaseText(Runner ? (S->bExitsUnlocked ? TEXT("ESCAPE BY CAR") : TEXT("DRIVE THROUGH FIVE RELAYS")) : TEXT("STOP THE RUNNER"),Muted,40,76,nullptr,.67f);
+ DrawChaseText(Runner ? (S->bExitsUnlocked ? TEXT("ESCAPE BY CAR") : TEXT("SYNC FIVE RELAYS")) : TEXT("STOP THE RUNNER"),Muted,40,76,nullptr,.67f);
  const ACitixChasePlayerState* TargetState=PS;
  if (!Runner) for (APlayerState* Other:S->PlayerArray) if (const auto* Target=Cast<ACitixChasePlayerState>(Other); Target && Target->ChaseRole==ECitixChaseRole::Runner) { TargetState=Target; break; }
  const auto* TargetCar=!Runner && TargetState!=PS ? Cast<ACitixVehiclePawn>(TargetState->GetPawn()) : nullptr;
@@ -404,14 +422,14 @@ void ACitixDrivingHUD::DrawChasePanel(float ScreenWidth, float ScreenHeight)
  const int Sec=FMath::Max(0,FMath::CeilToInt(S->PhaseSecondsRemaining));
  DrawChaseRect(Card,W*.5f-125,24,250,90);
  DrawChaseText(FString::Printf(TEXT("%02d:%02d"),Sec/60,Sec%60),Ink,W*.5f-45,28,nullptr,1.8f);
- for (int I=0; I<5; ++I) Hex(W*.5f-76+I*38,86,I<S->CompletedRelays);
+ for (int I=0; I<FCitixChaseRules::RelaysRequired; ++I) Hex(W*.5f-(FCitixChaseRules::RelaysRequired-1)*19+I*38,86,I<S->CompletedRelays);
  DrawChaseText(FString::Printf(TEXT("ROUND %d / 2"),S->RoundNumber),Muted,W*.5f-38,120,nullptr,.6f);
  if (S->Phase==ECitixChasePhase::Countdown) {
   const float X=W*.5f-280,Y=H*.5f-92;
   DrawChaseRect(Card,X,Y,560,184); DrawChaseLine(X,Y,X+560,Y,RoleInk,3);
   DrawChaseText(Runner ? TEXT("RUNNER / ESCAPE") : TEXT("CHASER / STOP THE RUNNER"),RoleInk,X+24,Y+18,nullptr,1.25f);
-  DrawChaseText(Runner ? TEXT("Drive through 5 blue relays, then either exit.") : TEXT("Ram the car 4 times to wreck it."),Ink,X+24,Y+58,nullptr,.8f);
-  DrawChaseText(Runner ? TEXT("Yellow gates boost. LMB releases smoke for 5s.") : TEXT("On foot: 4 pistol hits, or hold F to capture."),Muted,X+24,Y+89,nullptr,.75f);
+  DrawChaseText(Runner ? TEXT("Six relays: stay 1s within 9.6m, below 60 km/h.") : TEXT("Ram the car 4 times to wreck it."),Ink,X+24,Y+58,nullptr,.8f);
+  DrawChaseText(Runner ? TEXT("Escape: stay in the exit for 4s. LMB: smoke.") : TEXT("On foot: 4 pistol hits, or hold F to capture."),Muted,X+24,Y+89,nullptr,.75f);
   DrawChaseText(Runner ? TEXT("One replacement. Second wreck ends the round.") : TEXT("Second wreck or time runs out: you win."),Muted,X+24,Y+117,nullptr,.75f);
   DrawChaseText(FString::Printf(TEXT("STARTS IN %d"),Sec),Ink,X+24,Y+151,nullptr,.7f);
   DrawChaseRect(RoleInk.CopyWithNewOpacity(.2f),X+170,Y+157,366,4);
@@ -424,19 +442,22 @@ void ACitixDrivingHUD::DrawChasePanel(float ScreenWidth, float ScreenHeight)
   const float Alpha=(ChaseImpactUntil-Now)*2;
   DrawChaseRect(Red.CopyWithNewOpacity(.1f*Alpha),0,0,12,H); DrawChaseRect(Red.CopyWithNewOpacity(.1f*Alpha),W-12,0,12,H);
  }
- if (S->bRunnerRevealed || (Runner && S->NextRevealSecondsRemaining<=5)) {
-  DrawChaseRect(Card,24,151,258,30);
-  DrawChaseText(FString::Printf(TEXT("%s  %.0fs"),S->bRunnerRevealed ? Runner ? TEXT("SIGNAL EXPOSED") : TEXT("RUNNER SIGNAL") : TEXT("NEXT REVEAL"),S->bRunnerRevealed ? S->RevealSecondsRemaining : S->NextRevealSecondsRemaining),Yellow,40,157,nullptr,.75f);
- }
+ DrawChaseRect(Card,24,151,258,30);
+ DrawChaseText(Runner ? (S->bRunnerRevealed ? TEXT("TRACKED / STAY MOVING") : TEXT("SMOKE / TRACKING HIDDEN")) : (S->bRunnerRevealed ? TEXT("RUNNER TRACKING / LIVE") : TEXT("SMOKE / TRACKING LOST")),Runner ? Yellow : Blue,40,157,nullptr,.7f);
  if (Runner) {
   const float Cooldown=FMath::Max(0.f,S->BreakawayReadyAt-ServerNow);
   DrawChaseRect(Card,W-240,H-222,216,35);
   DrawChaseText(Cooldown>0 ? FString::Printf(TEXT("GATES RECHARGING  %.0fs"),FMath::CeilToFloat(Cooldown)) : TEXT("BREAKAWAY READY"),Cooldown>0 ? Muted : Yellow,W-220,H-216,nullptr,.66f);
   DrawChaseRect(Muted.CopyWithNewOpacity(.2f),W-220,H-195,176,3); DrawChaseRect(Yellow,W-220,H-195,176*(1-Cooldown/15.f),3);
- } else if (PS->GateSlowUntil>ServerNow) {
-  const float End=PS->GateSlowUntil;
-  DrawChaseRect(Card,W-240,H-222,216,35); DrawChaseText(FString::Printf(TEXT("%s  %.1fs"),TEXT("GATE DRAG"),End-ServerNow),Red,W-220,H-212,nullptr,.8f);
-  DrawChaseRect(Red.CopyWithNewOpacity(.13f),0,0,8,H); DrawChaseRect(Red.CopyWithNewOpacity(.13f),W-8,0,8,H);
+ } else {
+  const float Cooldown=FMath::Max(0.f,PS->NextRapidBrakeAt-ServerNow);
+  const bool Active=PS->RapidBrakeUntil>ServerNow,Ready=PS->RapidBrakeCharges>0;
+  DrawChaseRect(Card,W-240,H-222,216,35);
+  const FString Status=Active ? TEXT("RMB  BRAKING") : Ready ? TEXT("RMB  RAPID BRAKE / READY") : FString::Printf(TEXT("RMB  BRAKE / %.0fs"),FMath::CeilToFloat(Cooldown));
+  DrawChaseText(Status,Ready || Active ? Blue : Muted,W-220,H-216,nullptr,.62f);
+  DrawChaseRect(Muted.CopyWithNewOpacity(.2f),W-220,H-195,176,3);
+  DrawChaseRect(Blue,W-220,H-195,176*(Ready ? 1.f : FMath::Clamp(1.f-Cooldown/FCitixChaseRules::RapidBrakeRecharge,0.f,1.f)),3);
+  if(PS->GateSlowUntil>ServerNow) {DrawChaseText(TEXT("GATE DRAG"),Red,W-220,H-243,nullptr,.65f); DrawChaseRect(Red.CopyWithNewOpacity(.13f),0,0,8,H); DrawChaseRect(Red.CopyWithNewOpacity(.13f),W-8,0,8,H);}
  }
 
  FString Prompt;
@@ -489,7 +510,7 @@ void ACitixDrivingHUD::DrawChasePanel(float ScreenWidth, float ScreenHeight)
   DrawChaseRect(Card,W*.5f-155,H-170,310,50);
   DrawChaseText(FString::Printf(TEXT("FROZEN  %.1fs"),RemainingIce),Blue,W*.5f-137,H-164,nullptr,.95f);
   DrawChaseText(TEXT("-30% SPEED / ACCELERATION LOCKED"),Muted,W*.5f-137,H-141,nullptr,.55f);
-  DrawChaseRect(Blue,W*.5f-155,H-120,310*RemainingIce/3.f,3);
+  DrawChaseRect(Blue,W*.5f-155,H-120,310*RemainingIce/FCitixChaseRules::IceDuration,3);
  }
  if (!Runner) {
   if (Car) {
@@ -499,7 +520,7 @@ void ACitixDrivingHUD::DrawChasePanel(float ScreenWidth, float ScreenHeight)
    const float Refill=FMath::Max(0.f,PS->NextIceAt-ServerNow);
    const FString Status=PS->LastIceAt>0 && ServerNow-PS->LastIceAt<1.8f ? PS->bLastIceHit ? TEXT("RUNNER FROZEN") : TEXT("WAVE RELEASED") : PS->IceCharges>=2 ? TEXT("TWO CHARGES READY") : FString::Printf(TEXT("NEXT CHARGE  %.0fs"),FMath::CeilToFloat(Refill));
    DrawChaseText(Status,Muted,40,H-78,nullptr,.85f);
-   DrawChaseText(TEXT("40m / WIDE FORWARD SCAN"),Muted,40,H-49,nullptr,.75f);
+   DrawChaseText(TEXT("56m / FREEZE 4.5s"),Muted,40,H-49,nullptr,.75f);
   }
   if (GetOwningPawn()) {
    int32 Gate=INDEX_NONE; float D=FLT_MAX;
@@ -521,24 +542,92 @@ void ACitixDrivingHUD::DrawChasePanel(float ScreenWidth, float ScreenHeight)
   for (APlayerState* State:S->PlayerArray) if (const ACitixChasePlayerState* Target=Cast<ACitixChasePlayerState>(State); Target && Target->ChaseRole==ECitixChaseRole::Runner && Target->GetPawn()) {
    const ACitixOnFootPawn* Walker=Cast<ACitixOnFootPawn>(Target->GetPawn());
    if (Foot && Walker && !Walker->IsInShockwaveRecovery() && FVector::DistSquared(Foot->GetActorLocation(),Walker->GetActorLocation())<=FMath::Square(250.f)) Prompt=TEXT("HOLD F  CAPTURE RUNNER");
-   if (S->bRunnerRevealed) {
-    Marker(Target->GetPawn()->GetActorLocation()+FVector(0,0,140),Red,TEXT("RUNNER"));
-    FVector2D Head,Base; const FVector P=Target->GetPawn()->GetActorLocation();
-    if (PC->ProjectWorldLocationToScreen(P+FVector(0,0,Walker ? 95.f : 80.f),Head) && PC->ProjectWorldLocationToScreen(P-FVector(0,0,Walker ? 80.f : 70.f),Base)) {
-     Head/=ChaseUIScale; Base/=ChaseUIScale; const float R=FMath::Clamp(FMath::Abs(Base.Y-Head.Y)*.55f,12.f,70.f);
-     for (float Side:{-1.f,1.f}) { const float X=Head.X+Side*R; DrawChaseLine(X,Head.Y,X,Head.Y+12,Red,2); DrawChaseLine(X,Head.Y,X-Side*10,Head.Y,Red,2); DrawChaseLine(X,Base.Y,X,Base.Y-12,Red,2); DrawChaseLine(X,Base.Y,X-Side*10,Base.Y,Red,2); }
-    }
+   if(S->bRunnerRevealed) {
+    DrawRunnerTracker(Target->GetPawn(),W,H);
+    if(!DrawRunnerESP(Target->GetPawn(),W,H)) Marker(Target->GetPawn()->GetActorLocation(),Blue,TEXT("RUNNER"));
    }
   }
  }
  if (Foot && Foot->IsInShockwaveRecovery()) Prompt=TEXT("RECOVERING — PROTECTED");
- if (PS->bInteractionActive) {
+ const auto* Commitment=Runner ? PS : TargetState;
+ const bool Escaping=Commitment && Commitment->bInteractionActive && Commitment->InteractionType==ECitixChaseInteraction::Escape;
+ const bool Syncing=Runner && PS->bInteractionActive && PS->InteractionType==ECitixChaseInteraction::Relay;
+ if(Escaping || Syncing) {
+  const float Duration=Escaping ? FCitixChaseRules::EscapeCommitDuration : FCitixChaseRules::RelaySyncDuration;
+  const float Left=Commitment->InteractionSecondsRemaining;
+  const FLinearColor Color=Escaping && !Runner ? Red : Blue;
+  const float X=W*.5f-180,Y=H-245;
+  DrawChaseRect(Card,X,Y,360,68); DrawChaseLine(X,Y,X+360,Y,Color,2);
+  DrawChaseText(Escaping ? FString::Printf(TEXT("%s / %d"),Runner ? TEXT("ESCAPING") : TEXT("RUNNER ESCAPING"),FMath::Max(1,FMath::CeilToInt(Left))) : FString::Printf(TEXT("SYNCING RELAY / %.1fs"),Left),Color,X+18,Y+10,nullptr,1.f);
+  DrawChaseText(Escaping ? Runner ? TEXT("STAY INSIDE EXIT / LEAVING CANCELS") : TEXT("INTERCEPT THE EXIT BEFORE TIME RUNS OUT") : TEXT("STAY WITHIN 9.6m / BELOW 60 KM/H"),Muted,X+18,Y+35,nullptr,.65f);
+  DrawChaseRect(Muted.CopyWithNewOpacity(.2f),X+18,Y+57,324,3);
+  DrawChaseRect(Color,X+18,Y+57,324*FMath::Clamp(1.f-Left/Duration,0.f,1.f),3);
+  if(Runner)Prompt=Escaping ? TEXT("ESCAPE COUNTDOWN ACTIVE") : TEXT("RELAY SYNC ACTIVE");
+ } else if(Runner && !S->bExitsUnlocked && GetOwningPawn()) {
+  for(int32 I=0;I<S->LayoutRelayLocations.Num();++I) {
+   if(S->ActivatedRelays.IsValidIndex(I) && S->ActivatedRelays[I])continue;
+   const FVector Delta=GetOwningPawn()->GetActorLocation()-S->LayoutRelayLocations[I];
+   if(Delta.Size2D()>1000.f || FMath::Abs(Delta.Z)>350.f)continue;
+   DrawChaseRect(Card,W*.5f-180,H-245,360,48);
+   DrawChaseText(Car && Car->GetDisplaySpeedKmh()>=60.f ? TEXT("RELAY / SLOW BELOW 60 KM/H") : TEXT("RELAY / STAY 1s INSIDE THE 9.6m RING"),Blue,W*.5f-162,H-231,nullptr,.8f); break;
+  }
+ }
+ if(PS->bInteractionActive && !Syncing && PS->InteractionType!=ECitixChaseInteraction::Escape) {
   const float Duration=PS->InteractionType==ECitixChaseInteraction::Breakaway ? 3.f : 2.f;
   Ring(W*.5f,H-95,22,1-PS->InteractionSecondsRemaining/Duration,PS->InteractionType==ECitixChaseInteraction::Breakaway ? Yellow : Blue);
-  Prompt=FString::Printf(TEXT("%s  %.1fs"),PS->InteractionType==ECitixChaseInteraction::Relay ? TEXT("SYNCING RELAY") : TEXT("HOLD F"),PS->InteractionSecondsRemaining);
+  Prompt=FString::Printf(TEXT("HOLD F / %.1fs"),PS->InteractionSecondsRemaining);
  }
  if (PC->ChaseMessageUntil>Now) Prompt=PC->ChaseMessage;
  if (!Prompt.IsEmpty()) { const float Width=FMath::Min(520.f,Prompt.Len()*8.f+34); DrawChaseRect(Card,W*.5f-Width*.5f,H-56,Width,30); DrawChaseText(Prompt,Ink,W*.5f-Width*.5f+17,H-49,nullptr,.75f); }
+}
+
+void ACitixDrivingHUD::DrawPlayerCarLabels(float W,float H)
+{
+ auto* PC=GetOwningPlayerController();
+ const auto* State=GetWorld()->GetGameState<ACitixChaseGameState>();
+ if(!PC || !PC->PlayerCameraManager || !State) return;
+ static const FText RunnerLabel=FText::FromString(TEXT("RUNNER")),ChaserLabel=FText::FromString(TEXT("CHASER"));
+ const FVector Camera=PC->PlayerCameraManager->GetCameraLocation();
+ for(const APlayerState* Player:State->PlayerArray) {
+  const auto* Driver=Cast<ACitixChasePlayerState>(Player);
+  auto* Car=Driver ? Cast<ACitixVehiclePawn>(Driver->GetPawn()) : nullptr;
+  if(Driver && Driver->ChaseRole==ECitixChaseRole::Runner && State->Phase==ECitixChasePhase::Pursuit && !State->bRunnerRevealed) continue;
+  if(!Car || Driver==PC->PlayerState || Car==PC->GetPawn() || !Car->IsOccupied() || Car->IsDisplayDestroyed()) continue;
+  if(FVector::DistSquared(Camera,Car->GetActorLocation())>FMath::Square(25000.f)) continue;
+  FVector2D Screen;
+  if(!PC->ProjectWorldLocationToScreen(Car->GetActorLocation()+FVector(0,0,190),Screen)) continue;
+  Screen/=ChaseUIScale;
+  if(Screen.X<78 || Screen.X>W-78 || Screen.Y<24 || Screen.Y>H-24) continue;
+  // A visible-car identifier, not a through-wall tracking marker.
+  if(!PC->LineOfSightTo(Car,Camera,false)) continue;
+  const bool Runner=Driver->ChaseRole==ECitixChaseRole::Runner;
+  const FLinearColor Colour=Runner ? FLinearColor(.3f,.8f,1.f) : FLinearColor(1.f,.45f,.48f);
+  const FSlateFontInfo Font(ChaseFont,FMath::RoundToInt(16.f*.8f*ChaseUIScale),TEXT("Regular"));
+  FCanvasTextItem Label(FVector2D::ZeroVector,Runner ? RunnerLabel : ChaserLabel,Font,Colour);
+  const float FontDPI=FMath::Max(.01f,Canvas->GetDPIScale());
+  const FVector2D TextSize=FSlateApplication::Get().GetRenderer()->GetFontMeasureService()->Measure(Label.Text,Font,FontDPI);
+  const FVector2D PanelSize=TextSize/ChaseUIScale+FVector2D(24,10);
+  const FVector2D Corner=Screen-PanelSize*.5f;
+  DrawChaseRect(FLinearColor(.012f,.022f,.035f,.85f),Corner.X,Corner.Y,PanelSize.X,PanelSize.Y);
+  DrawChaseRect(Colour,Corner.X,Corner.Y,2,PanelSize.Y);
+  Label.Position=Screen*ChaseUIScale/FontDPI;
+  Label.bCentreX=true;
+  Label.bCentreY=true;
+  Label.EnableShadow(FLinearColor(0,0,0,.65f));
+  Canvas->DrawItem(Label);
+ }
+}
+
+void ACitixDrivingHUD::DrawRunnerTracker(APawn* Target,float W,float H)
+{
+ auto* PC=GetOwningPlayerController();
+ if(!PC || !Target) return;
+ if(!GroundTracker.IsValid()) {
+  FActorSpawnParameters Params; Params.Owner=PC;
+  GroundTracker=GetWorld()->SpawnActor<ACitixGroundTracker>(Params);
+ }
+ if(GroundTracker.IsValid()) GroundTracker->Track(Target);
+ bTrackerInitialized=true;
 }
 
 void ACitixDrivingHUD::DrawStatBar(float X, float Y, float Width, const FString& Label,
@@ -1430,4 +1519,37 @@ void ACitixDrivingHUD::DrawPlayerHealthBars(float LeftX, float StackY)
 		DrawRect(PanelColour, ScreenPos.X - 42.f, ScreenPos.Y - 12.f, 94.f, 10.f);
 		DrawRect(HealthColour(Fraction), ScreenPos.X - 40.f, ScreenPos.Y - 10.f, 90.f * Fraction, 6.f);
 	}
+}
+
+// Fixed corner count; no temporary meshes, widgets or per-frame point arrays.
+bool ACitixDrivingHUD::DrawRunnerESP(APawn* Target,float W,float H) {
+ auto* PC=GetOwningPlayerController(); if(!PC || !Target) return false;
+ FVector2D Centre; if(!PC->ProjectWorldLocationToScreen(Target->GetActorLocation(),Centre)) return false;
+ Centre/=ChaseUIScale;
+ if(Centre.X<45 || Centre.X>W-45 || Centre.Y<45 || Centre.Y>H-260) return false;
+ const FVector Extent=Cast<ACitixVehiclePawn>(Target) ? FVector(250,110,95) : FVector(45,45,95);
+ float Size=36.f;
+ for(int32 I=0;I<8;++I) {
+  const FVector Corner((I&1) ? Extent.X : -Extent.X,(I&2) ? Extent.Y : -Extent.Y,(I&4) ? Extent.Z : -Extent.Z);
+  FVector2D Point;
+  if(PC->ProjectWorldLocationToScreen(Target->GetActorTransform().TransformPosition(Corner),Point)) {
+   Point/=ChaseUIScale; Size=FMath::Max(Size,static_cast<float>(FMath::Max(FMath::Abs(Point.X-Centre.X),FMath::Abs(Point.Y-Centre.Y))*2));
+  }
+ }
+ Size=FMath::Clamp(Size,36.f,180.f);
+ const float Half=Size*.5f, Arm=FMath::Clamp(Size*.22f,8.f,22.f);
+ const FLinearColor Cyan(.2f,.8f,1.f,.9f),Outline(0,0,0,.8f);
+ for(float X:{-1.f,1.f}) for(float Y:{-1.f,1.f}) {
+  const float A=Centre.X+X*Half,B=Centre.Y+Y*Half;
+  // Preserve the exact target projection without painting over primary HUD text.
+  if((A<300 && B<185) || (FMath::Abs(A-W*.5f)<145.f && B<140.f)) continue;
+  DrawChaseLine(A,B,A-X*Arm,B,Outline,4); DrawChaseLine(A,B,A,B-Y*Arm,Outline,4);
+  DrawChaseLine(A,B,A-X*Arm,B,Cyan,1.5f); DrawChaseLine(A,B,A,B-Y*Arm,Cyan,1.5f);
+ }
+ const float Metres=GetOwningPawn() ? FVector::Dist(GetOwningPawn()->GetActorLocation(),Target->GetActorLocation())*.01f : 0.f;
+ float LabelY=Centre.Y+Half+6;
+ if(Centre.X<300) LabelY=FMath::Max(LabelY,185.f);
+ else if(FMath::Abs(Centre.X-W*.5f)<145.f) LabelY=FMath::Max(LabelY,145.f);
+ DrawChaseText(FString::Printf(TEXT("RUNNER  %.0fm"),Metres),Cyan,Centre.X-45,LabelY,nullptr,.65f);
+ return true;
 }

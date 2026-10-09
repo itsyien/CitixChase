@@ -4,6 +4,7 @@
 #include "Engine/NetSerialization.h"
 #include "CitixSmokeCloud.generated.h"
 class UInstancedStaticMeshComponent;
+class APlayerState;
 UCLASS()
 class CITIX_API ACitixSmokeCloud : public AActor
 {
@@ -11,6 +12,8 @@ class CITIX_API ACitixSmokeCloud : public AActor
 public:
  ACitixSmokeCloud();
  virtual void BeginPlay() override;
+ bool ContainsPoint(const FVector& Point,float ServerNow) const;
+ bool IntersectsSightline(const FVector& From,const FVector& To,float ServerNow) const;
  virtual void Tick(float DeltaSeconds) override;
  virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Props) const override;
  UPROPERTY(Replicated) float StartedAt=0.f;
@@ -18,6 +21,10 @@ public:
  UPROPERTY() TObjectPtr<UInstancedStaticMeshComponent> Billows;
  UPROPERTY(Replicated) TArray<FVector_NetQuantize> EmissionPositions;
  TWeakObjectPtr<AController> EmitterController;
+ // PlayerState survives switching from the deploying car to an on-foot pawn.
+ UPROPERTY(Replicated) TObjectPtr<APlayerState> EmitterPlayerState;
+ float OpacityForViewer(const APlayerState* Viewer) const;
+ float PuffOpacityForViewer(float PuffOpacity,const APlayerState* Viewer) const;
  static constexpr float DiameterScale=1.3f;
  static constexpr int32 PuffCount=100;
  static constexpr float HorizontalSpread=1.5f;

@@ -1,0 +1,2 @@
+[2026.10.08-14.51.31:518][  0]LogNet: PktLag set to 80
+[2026.10.08-14.51.31:518][  0]LogNet: PktLagVariance set to 20
