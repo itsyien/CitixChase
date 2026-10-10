@@ -304,5 +304,6 @@ uint32 FCitixRoadNetwork::GetLayoutHash(int32 MapRevision) const
   Value(FMath::RoundToInt(Edge.CorridorWidth)); Value(FMath::RoundToInt(Edge.SurfaceWidth));
   Value(Edge.bDrivable); Value(Edge.bBridge);
  }
+ if(GeometryHash) Hash=HashCombine(Hash,GeometryHash);
  return HashCombine(Hash,GetTypeHash(MapRevision));
 }

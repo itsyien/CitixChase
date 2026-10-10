@@ -1,0 +1,9 @@
+# Coastal Hillside redesign
+
+Approved plan: preserve the current project as GitHub commit "V2 new map change", then rebuild a compact coastal mountain map in the existing low-poly style. Never replace the installed game.
+
+1. Checkpoint: commit/push existing source, assets, docs and sanitized config; tag v2-new-map-change. Develop on hillside-coastal-redesign.
+2. Geography/roads: irregular connected shoreline and mountain silhouette, coast 1-6 m, village 18-42 m, summit road about 90 m, peak about 110 m. Five dramatic drivable hairpins, contour village circuit, eastern ridge descent, coastal bypass, two approaches, tunnel, short ravine bridge. No circular junction caps. Road width 13-16 m, minimum bend radius 24 m, target grade <=10%, hard maximum 12%.
+3. Structures/scenery: road benches and matched collision; real retaining walls, tunnel portals and bridge supports; 25-35 clustered warm-roof houses across elevations, summit tower, village clock, marina, restrained vegetation/rocks and readable signs. Hillside-only warm afternoon palette/fog, shared low-poly meshes and HISM groups.
+4. Compatibility/config: grouped Hillside settings in CitixCitySettings, deterministic seeded generation, revision 4 and geometry/settings identity; two starts, fourteen relay candidates, six active/five required, two exits/four recovery sites. Preserve City and all twelve adjustments, multiplayer, traffic and gameplay.
+5. Proof: comparable actual renders after structural stages; graph/grade/clearance/collision tests; actual control-driven routes with two vehicle profiles; host/guest roles, escape, recovery, rematch and latency/loss; separate packaged proof; <=10% target frame-time regression at fixed settings. Up to three major self-review passes, document failures and limitations. No deployment.

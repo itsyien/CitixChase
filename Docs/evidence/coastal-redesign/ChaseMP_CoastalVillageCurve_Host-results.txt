@@ -1,0 +1,3 @@
+[2026.10.09-21.37.43:978][426]LogCitix: [CitixChase] City identity acknowledged: player=Driver 02 seed=47821 hash=381776518 valid=1
+[2026.10.09-21.37.54:001][833]LogCitix: [CitixHillsideDrive] START route=Terrace Loop points=61 isolated-traffic=1 initial-pose=V(X=-13000.00, Y=4000.00, Z=2490.00) profile=Sedan
+[2026.10.09-21.38.56:934][976]LogCitix: [CitixHillsideDrive] PASS route=Terrace Loop seconds=63.2 endpoint=V(X=-12428.60, Y=4182.68, Z=2470.17) health=100.0

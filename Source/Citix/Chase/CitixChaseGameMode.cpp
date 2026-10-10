@@ -1794,7 +1794,7 @@ void ACitixChaseGameMode::SnapChaseLocationsToRoads(const FCitixRoadNetwork& Roa
 {
  for(TActorIterator<ACitixCityGenerator> It(GetWorld());It;++It) if(It->bHillsideMap)
  {
-  const auto Layout=FCitixHillsideLayout::Build();
+  const auto& Layout=It->GetHillsideLayout();
   SpawnLocations=Layout.Spawns; ExitLocations=Layout.Exits; ReplacementLocations=Layout.RecoveryParking;
   auto Project=[&](TArray<FVector>& Locations)
   {

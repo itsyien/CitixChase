@@ -9,6 +9,23 @@
 #include "CitixTypes.h"
 #include "CitixCitySettings.generated.h"
 
+/** Compact coastal mountain tuning. Heights and distances are centimetres. */
+USTRUCT(BlueprintType)
+struct FCitixHillsideSettings
+{
+ GENERATED_BODY()
+ UPROPERTY(EditAnywhere,Category="Geography") FVector2D Footprint=FVector2D(70000,64000);
+ UPROPERTY(EditAnywhere,Category="Geography",meta=(ClampMin="8500")) float SummitRoadHeight=9000;
+ UPROPERTY(EditAnywhere,Category="Geography") float PeakHeight=11000;
+ UPROPERTY(EditAnywhere,Category="Roads",meta=(ClampMin="1300",ClampMax="1600")) float RoadWidth=1400;
+ UPROPERTY(EditAnywhere,Category="Roads",meta=(ClampMin="2400",ClampMax="3000")) float BendRadius=3000;
+ UPROPERTY(EditAnywhere,Category="Roads",meta=(ClampMin="0.01",ClampMax="0.12")) float MaxGrade=.12f;
+ UPROPERTY(EditAnywhere,Category="Terrain",meta=(ClampMin="400",ClampMax="1200")) float TerrainSpacing=800;
+ UPROPERTY(EditAnywhere,Category="Scenery",meta=(ClampMin="25",ClampMax="35")) int32 HouseCount=30;
+ UPROPERTY(EditAnywhere,Category="Scenery",meta=(ClampMin="0",ClampMax="1")) float VegetationDensity=.5f;
+ UPROPERTY(EditAnywhere,Category="Atmosphere",meta=(ClampMin="0",ClampMax="24")) float InitialHour=17.5f;
+};
+
 /** Road class mapped to its dimensions. */
 USTRUCT(BlueprintType)
 struct FCitixRoadClassRule
@@ -134,6 +151,8 @@ public:
 	UCitixCitySettings();
 
 	static const UCitixCitySettings& Get() { return *GetDefault<UCitixCitySettings>(); }
+
+ UPROPERTY(EditAnywhere,config,Category="Hillside") FCitixHillsideSettings Hillside;
 
 	virtual FName GetCategoryName() const override { return FName("Game"); }
 

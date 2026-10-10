@@ -166,6 +166,7 @@ bool FCitixChaseRulesTest::RunTest(const FString& Parameters)
  FCitixChaseRules::RefillAmmo(7.99f,Ammo,Next); TestEqual(TEXT("No early refill"),Ammo,14);
  --Ammo; FCitixChaseRules::RefillAmmo(8.f,Ammo,Next); TestEqual(TEXT("Shot did not restart refill"),Ammo,14);
  FCitixChaseRules::RefillAmmo(16.f,Ammo,Next); TestEqual(TEXT("Refill reaches capacity"),Ammo,15); TestEqual(TEXT("Full reserve clears timer"),Next,0.f);
+ TestEqual(TEXT("Hillside shares its warm starting hour on both peers"),FCitixChaseRules::SceneHour(0.f,17.5f),17.5f);
  TestEqual(TEXT("Starting hour retained"),FCitixChaseRules::SceneHour(0.f),19.f);
  TestEqual(TEXT("Night starts after remaining dusk"),FCitixChaseRules::SceneHour(11.25f),19.5f);
  TestEqual(TEXT("Night lasts 101.25 seconds"),FCitixChaseRules::SceneHour(112.5f),4.5f);

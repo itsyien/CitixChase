@@ -1,0 +1,34 @@
+LogCsvProfiler: Display: Metadata set : commandline="" E:/UnrealProjects/CitixChase/Citix.uproject -unattended -nullrhi -nosound -ExecCmds="Automation RunTests CitixChase" -TestExit="Automation Test Queue Empty" -abslog=E:/UnrealProjects/CitixChase/Saved/Logs/Coastal-Complete-Tests.log""
+LogInit: Command Line: -unattended -nullrhi -nosound -ExecCmds="Automation RunTests CitixChase" -TestExit="Automation Test Queue Empty" -abslog=E:/UnrealProjects/CitixChase/Saved/Logs/Coastal-Complete-Tests.log
+[2026.10.09-21.39.27:410][189]LogAutomationController: Display: Test Completed. Result={Success} Name={ObjectiveCommitments} Path={CitixChase.Balance.ObjectiveCommitments}
+[2026.10.09-21.39.27:419][192]LogAutomationController: Display: Test Completed. Result={Success} Name={PursuitAndRelaySpread} Path={CitixChase.Balance.PursuitAndRelaySpread}
+[2026.10.09-21.39.27:430][194]LogAutomationController: Display: Test Completed. Result={Success} Name={WindowAnchor} Path={CitixChase.Camera.WindowAnchor}
+[2026.10.09-21.39.27:624][197]LogAutomationController: Display: Test Completed. Result={Success} Name={VisibleGroundBoundary} Path={CitixChase.City.VisibleGroundBoundary}
+[2026.10.09-21.39.28:190][200]LogAutomationController: Display: Test Completed. Result={Success} Name={PhysicsResponse} Path={CitixChase.Drift.PhysicsResponse}
+[2026.10.09-21.39.28:298][203]LogAutomationController: Display: Test Completed. Result={Success} Name={ProgressiveSteering} Path={CitixChase.Drift.ProgressiveSteering}
+[2026.10.09-21.39.28:304][205]LogAutomationController: Display: Test Completed. Result={Success} Name={AirCutThreshold} Path={CitixChase.FX.AirCutThreshold}
+[2026.10.09-21.39.28:314][207]LogAutomationController: Display: Test Completed. Result={Success} Name={SmokeViewerOpacity} Path={CitixChase.FX.SmokeViewerOpacity}
+[2026.10.09-21.39.28:321][209]LogAutomationController: Display: Test Completed. Result={Success} Name={TopSpeedAirFlow} Path={CitixChase.FX.TopSpeedAirFlow}
+[2026.10.09-21.39.28:334][212]LogAutomationController: Display: Test Completed. Result={Success} Name={TracerStopsAtCover} Path={CitixChase.FX.TracerStopsAtCover}
+[2026.10.09-21.39.28:343][214]LogAutomationController: Display: Test Completed. Result={Success} Name={AuthoredRoutes} Path={CitixChase.Hillside.AuthoredRoutes}
+[2026.10.09-21.39.28:351][216]LogAutomationController: Display: Test Completed. Result={Success} Name={CoastalComposition} Path={CitixChase.Hillside.CoastalComposition}
+[2026.10.09-21.39.28:364][219]LogAutomationController: Display: Test Completed. Result={Success} Name={ElevatedRoadSampling} Path={CitixChase.Hillside.ElevatedRoadSampling}
+[2026.10.09-21.39.28:606][221]LogAutomationController: Display: Test Completed. Result={Success} Name={PhysicalRoadSurfaces} Path={CitixChase.Hillside.PhysicalRoadSurfaces}
+[2026.10.09-21.39.28:827][223]LogAutomationController: Display: Test Completed. Result={Success} Name={WorldGeneration} Path={CitixChase.Hillside.WorldGeneration}
+[2026.10.09-21.39.28:845][226]LogAutomationController: Display: Test Completed. Result={Success} Name={LocalScanWorldFrost} Path={CitixChase.IceWave.LocalScanWorldFrost}
+[2026.10.09-21.39.28:854][228]LogAutomationController: Display: Test Completed. Result={Success} Name={ReplicatedState} Path={CitixChase.IceWave.ReplicatedState}
+[2026.10.09-21.39.28:862][230]LogAutomationController: Display: Test Completed. Result={Success} Name={TargetingAndRecharge} Path={CitixChase.IceWave.TargetingAndRecharge}
+[2026.10.09-21.39.28:872][232]LogAutomationController: Display: Test Completed. Result={Success} Name={OwnerHeadingAndVelocity} Path={CitixChase.Network.OwnerHeadingAndVelocity}
+[2026.10.09-21.39.28:981][234]LogAutomationController: Display: Test Completed. Result={Success} Name={BushDrag} Path={CitixChase.Roadside.BushDrag}
+[2026.10.09-21.39.29:107][237]LogAutomationController: Display: Test Completed. Result={Success} Name={CacheSurvivesHostTravel} Path={CitixChase.Roadside.CacheSurvivesHostTravel}
+[2026.10.09-21.39.29:115][239]LogAutomationController: Display: Test Completed. Result={Success} Name={CollisionAndBushArt} Path={CitixChase.Roadside.CollisionAndBushArt}
+[2026.10.09-21.39.29:138][242]LogAutomationController: Display: Test Completed. Result={Success} Name={PresetDrawDistance} Path={CitixChase.Roadside.PresetDrawDistance}
+[2026.10.09-21.39.29:150][244]LogAutomationController: Display: Test Completed. Result={Success} Name={RoundRules} Path={CitixChase.Rules.RoundRules}
+[2026.10.09-21.39.29:161][246]LogAutomationController: Display: Test Completed. Result={Success} Name={SightlineConcealment} Path={CitixChase.Smoke.SightlineConcealment}
+[2026.10.09-21.39.29:170][248]LogAutomationController: Display: Test Completed. Result={Success} Name={TrackingConcealment} Path={CitixChase.Smoke.TrackingConcealment}
+[2026.10.09-21.39.29:178][250]LogAutomationController: Display: Test Completed. Result={Success} Name={CameraBearingAndReveal} Path={CitixChase.Tracker.CameraBearingAndReveal}
+[2026.10.09-21.39.29:189][252]LogAutomationController: Display: Test Completed. Result={Success} Name={GroundProjectionAndRelay} Path={CitixChase.Tracker.GroundProjectionAndRelay}
+[2026.10.09-21.39.29:195][254]LogAutomationController: Display: Test Completed. Result={Success} Name={PoolVisibilityAndCollision} Path={CitixChase.Traffic.PoolVisibilityAndCollision}
+[2026.10.09-21.39.29:203][256]LogAutomationController: Display: Test Completed. Result={Success} Name={RecycleSnapshot} Path={CitixChase.Traffic.RecycleSnapshot}
+[2026.10.09-21.39.29:204][257]LogAutomationCommandLine: Display: ...Automation Test Queue Empty 30 tests performed.
+[2026.10.09-21.39.29:204][257]LogExit: Display: **** TestExit: Automation Test Queue Empty ****

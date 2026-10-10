@@ -1,6 +1,7 @@
 #include "City/CitixHillsideVisualProbe.h"
 #include "City/CitixCityGenerator.h"
 #include "City/CitixHillsideLayout.h"
+#include "Core/CitixCitySettings.h"
 #include "Player/CitixDrivingPlayerController.h"
 #include "Chase/CitixChaseGameMode.h"
 #include "Chase/CitixChaseGameState.h"
@@ -52,7 +53,8 @@ void CitixHillsideVisualProbeTick(ACitixDrivingPlayerController* PC)
   if(SelectionStage==2 && !State->bHillsideMap) {UE_LOG(LogCitix,Log,TEXT("[CitixMapProbe] City restored verified peers=%d result=1"),Verified); SelectionStage=3;}
   return;
  }
- if(!FParse::Param(FCommandLine::Get(),TEXT("CitixHillsideVisualProbe"))) return;
+ const bool Performance=FParse::Param(FCommandLine::Get(),TEXT("CitixHillsidePerfProbe"));
+ if(!FParse::Param(FCommandLine::Get(),TEXT("CitixHillsideVisualProbe")) && !Performance) return;
  struct FProbe { TWeakObjectPtr<UWorld> World; TWeakObjectPtr<ACameraActor> Camera; int32 Stage=0; float At=0; };
  static FProbe Probe;
  auto* World=PC->GetWorld();
@@ -66,20 +68,20 @@ void CitixHillsideVisualProbeTick(ACitixDrivingPlayerController* PC)
   City->bHillsideMap=true;
   // Isolated visual fixture; traffic adaptation is verified separately.
   City->bSpawnTraffic=false; City->bSpawnPedestrians=false; City->GenerateCity();
-  for(TActorIterator<ACitixTimeOfDay> It(World);It;++It) {It->SetActorTickEnabled(false); It->SetHours(11.f); It->SetTimePaused(true);}
+  for(TActorIterator<ACitixTimeOfDay> It(World);It;++It) {It->SetActorTickEnabled(false); It->SetHours(UCitixCitySettings::Get().Hillside.InitialHour); It->SetTimePaused(true);}
   for(TActorIterator<ACitixDestinationBeacon> It(World);It;++It) It->SetActorHiddenInGame(true);
   Probe.Camera=World->SpawnActor<ACameraActor>();
   Probe.Camera->GetCameraComponent()->SetFieldOfView(50.f);
   PC->SetViewTarget(Probe.Camera.Get());
   Probe.Stage=1; Probe.At=World->GetTimeSeconds();
  }
- const FVector Positions[]={{68000,-80000,90000},{22000,-33000,1200},{-45000,18000,10000},{-6000,-14500,1500},{-1000,-4000,3200},{-5000,26000,7200},{-32000,-30000,1700}};
- const FVector Targets[]={{0,8000,2200},{16000,-24000,100},{-19000,23000,3800},{-6000,-9000,1700},{-1000,5100,4000},{1000,31000,8500},{-27000,-25000,2000}};
+ const FVector Positions[]={{68000,-80000,90000},{45000,-45000,14000},{-45000,12000,16000},{-18388,-16189,1150},{-12000,-14500,6500},{-7000,32000,12500},{-32000,-30000,1700}};
+ const FVector Targets[]={{0,8000,4500},{0,7000,3500},{-12000,22000,6400},{-14523,-15662,1167},{-1500,-6000,4200},{3000,36000,11100},{-27000,-26000,2000}};
  const TCHAR* Names[]={TEXT("Hillside-Aerial"),TEXT("Hillside-Coast"),TEXT("Hillside-Switchbacks"),TEXT("Hillside-TunnelPortal"),TEXT("Hillside-Town"),TEXT("Hillside-Summit"),TEXT("Hillside-Marina")};
- const int32 Index=Probe.Stage-1;
+ const int32 Index=Performance ? 0 : Probe.Stage-1;
  Probe.Camera->SetActorLocation(Positions[Index]);
  Probe.Camera->SetActorRotation((Targets[Index]-Positions[Index]).Rotation());
- if(World->GetTimeSeconds()-Probe.At>(Probe.Stage==1 ? 5.f : 2.5f))
+ if(!Performance && World->GetTimeSeconds()-Probe.At>(Probe.Stage==1 ? 5.f : 2.5f))
  {
   FScreenshotRequest::RequestScreenshot(Names[Index],false,false);
   ++Probe.Stage; Probe.At=World->GetTimeSeconds();

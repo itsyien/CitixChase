@@ -72,9 +72,11 @@ struct FCitixChaseRules
  static bool ReplacementReady(float Now, float ReadyAt, bool Used, float Speed, float Distance) { return ReadyAt > 0.f && Now >= ReadyAt && !Used && Speed < 10.f && Distance <= 300.f; }
  static void RefillAmmo(float Now, int32& Ammo, float& Next) { if (Ammo >= 15) { Next = 0.f; return; } if (Next <= 0.f) Next = Now + 8.f; while (Next <= Now && Ammo < 15) { ++Ammo; Next += 8.f; } if (Ammo == 15) Next = 0.f; }
  static FVector LimitVelocity(FVector V, float Limit) { const float Speed = V.Size2D(); if (Limit > 0.f && Speed > Limit) { V.X *= Limit/Speed; V.Y *= Limit/Speed; } return V; }
- static float SceneHour(float Seconds) {
+ static float SceneHour(float Seconds, float InitialHour=19.f) {
   // Phase origin is 19:00, 11.25 seconds before night begins at 19:30.
-  float T = FMath::Fmod(FMath::Max(0.f, Seconds) + 258.75f, 270.f);
+  const float H=FMath::Fmod(FMath::Max(0.f,InitialHour),24.f);
+  const float Origin=H>=19.5f ? (H-19.5f)*11.25f : H<4.5f ? (H+4.5f)*11.25f : H<7.5f ? 101.25f+(H-4.5f)*22.5f : H<16.5f ? 168.75f+(H-7.5f)*3.75f : 202.5f+(H-16.5f)*22.5f;
+  float T = FMath::Fmod(FMath::Max(0.f, Seconds) + Origin, 270.f);
   if (T < 101.25f) return FMath::Fmod(19.5f + T * 9.f/101.25f, 24.f);
   T -= 101.25f; if (T < 67.5f) return 4.5f + T*3.f/67.5f;
   T -= 67.5f; if (T < 33.75f) return 7.5f + T*9.f/33.75f;

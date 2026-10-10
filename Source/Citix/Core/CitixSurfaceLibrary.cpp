@@ -171,6 +171,11 @@ FLinearColor FCitixSurfaceLibrary::GetColor(ECitixSurface Surface)
 	case ECitixSurface::Sidewalk:		return FLinearColor(0.30f, 0.30f, 0.295f);
 	case ECitixSurface::Curb:			return FLinearColor(0.38f, 0.38f, 0.365f);
 	case ECitixSurface::Grass:			return FLinearColor(0.065f, 0.19f, 0.06f);
+ case ECitixSurface::HillsideGrass: return FLinearColor(.19f,.27f,.11f);
+ case ECitixSurface::HillsideGrassDry: return FLinearColor(.32f,.33f,.17f);
+ case ECitixSurface::HillsideRock: return FLinearColor(.32f,.28f,.23f);
+ case ECitixSurface::HillsideRoof: return FLinearColor(.40f,.12f,.055f);
+ case ECitixSurface::HillsideWater: return FLinearColor(.025f,.12f,.19f);
 
 	case ECitixSurface::Roof:			return FLinearColor(0.115f, 0.118f, 0.128f);
 	case ECitixSurface::RoofDark:		return FLinearColor(0.070f, 0.072f, 0.080f);
@@ -308,6 +313,10 @@ float FCitixSurfaceLibrary::GetRoughness(ECitixSurface Surface)
 
 	case ECitixSurface::Water:			return 0.06f;
 	case ECitixSurface::WaterDeep:		return 0.05f;
+	case ECitixSurface::HillsideWater: return 0.9f;
+	case ECitixSurface::HillsideRock:
+	case ECitixSurface::HillsideGrass:
+	case ECitixSurface::HillsideGrassDry: return 0.95f;
 	case ECitixSurface::Embankment:		return 0.88f;
 	default:							return 0.85f;
 	}

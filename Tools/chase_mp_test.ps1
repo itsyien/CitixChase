@@ -11,6 +11,7 @@ param(
     [int]$HostWarmup = 22,
     [int]$Guests = 1,
     [switch]$Editor,
+    [switch]$Hillside,
 	[switch]$Packaged,
     [switch]$PackagedGuest,
     [string]$PackageDirectory = "",
@@ -61,7 +62,7 @@ $map = "/Engine/Maps/Templates/Template_Default"
 # A Game-target exe cannot be a dedicated server (IsRunningDedicatedServer is
 # compile-time), so the host is a listen server and the guests join by IP.
 
-$hostMap = if ($LobbyButtons) { $map } else { "$map`?listen" }
+$hostMap = if ($LobbyButtons) { $map } elseif ($Hillside) { "$map`?listen`?CitixMap=Hillside" } else { "$map`?listen" }
 Start-Instance "ChaseMP_${Tag}_Host" @($hostMap, "-port=$Port", "-game", "-CitixNetLog", "-CitixNetTag=Host", "-CitixName=Host")
 Start-Sleep -Seconds $HostWarmup
 

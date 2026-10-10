@@ -1,0 +1,11 @@
+{
+  "date": "2026-10-09",
+  "package": "E:/UnrealProjects/CitixChase/PackageHillsideV2/Windows",
+  "shipping_exe_sha256": "D1512C5ABC312F505CCD558872E967C7BFC56B3C026EFCCA5D8F2593C9C6A936",
+  "package_bytes": 763720262,
+  "installed_game_replaced": false,
+  "mode": "Editor listen host with actual Shipping packaged guest",
+  "seed": 47821,
+  "log": "Saved/Logs/ChaseMP_CoastalCookedRendered_Host.log",
+  "final_multiplayer_result": "passed: identity, five relays, escape gate 2, role swap, first wreck, 40-second replacement gate, second wreck, rematch startup"
+}

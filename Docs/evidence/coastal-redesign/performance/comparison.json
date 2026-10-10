@@ -1,0 +1,20 @@
+{
+  "baseline": {
+    "samples": 2000,
+    "mean_frame_ms": 4.4626579,
+    "median_frame_ms": 4.41805,
+    "p95_frame_ms": 5.0735,
+    "mean_draw_calls": 174.125,
+    "mean_primitives": 35157.75
+  },
+  "current": {
+    "samples": 2000,
+    "mean_frame_ms": 4.77729345,
+    "median_frame_ms": 4.7063,
+    "p95_frame_ms": 5.6014,
+    "mean_draw_calls": 174.488,
+    "mean_primitives": 49203.174
+  },
+  "mean_regression_percent": 7.0504071127657,
+  "within_ten_percent_target": true
+}

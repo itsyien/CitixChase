@@ -22,11 +22,11 @@ namespace
   }
   void Quad(const FVector& A,const FVector& B,const FVector& C,const FVector& D)
   { Triangle(A,B,C); Triangle(C,B,D); }
-  void Apply(UProceduralMeshComponent* Mesh,ECitixSurface Material,bool Collision=true)
+  void Apply(UProceduralMeshComponent* Mesh,ECitixSurface Material,bool Collision=true,int32 Section=0)
   {
-   Mesh->ClearAllMeshSections();
-   Mesh->CreateMeshSection(0,Vertices,Indices,Normals,UV,TArray<FColor>(),TArray<FProcMeshTangent>(),Collision);
-   Mesh->SetMaterial(0,FCitixSurfaceLibrary::GetMaterial(Material));
+   if(Section==0) Mesh->ClearAllMeshSections();
+   Mesh->CreateMeshSection(Section,Vertices,Indices,Normals,UV,TArray<FColor>(),TArray<FProcMeshTangent>(),Collision);
+   Mesh->SetMaterial(Section,FCitixSurfaceLibrary::GetMaterial(Material));
   }
  };
  FVector RoadRight(const FVector& Delta)
@@ -52,8 +52,24 @@ ACitixHillsideBuilder::ACitixHillsideBuilder()
 
 void ACitixHillsideBuilder::Build(const FCitixHillsideLayout& Layout)
 {
- FSurface RoadGeometry,TerrainGeometry,TunnelGeometry,WaterGeometry;
+ FSurface RoadGeometry,TerrainGeometry,TunnelGeometry,WaterGeometry,RockGeometry,DryGeometry;
  const auto Network=Layout.BuildRoadNetwork();
+ auto WallRange=[&](FVector A,FVector B)
+ {
+  FVector2D Range(0,1); const FVector D=B-A; const double Length=D.Size();
+  if(Length<1) return FVector2D(1,0);
+  const FVector Direction=D/Length;
+  for(int32 N=0;N<Network.Nodes.Num();++N) if(Network.GetNodeDegree(N)>=3)
+  {
+   const FVector Offset=A-FVector(Network.Nodes[N].Position,Network.Nodes[N].Elevation);
+   const double Along=FVector::DotProduct(Offset,Direction),Discriminant=Along*Along-Offset.SizeSquared()+3500.*3500.;
+   if(Discriminant<0) continue;
+   const double Enter=(-Along-FMath::Sqrt(Discriminant))/Length,Exit=(-Along+FMath::Sqrt(Discriminant))/Length;
+   if(Enter<=0 && Exit>0) Range.X=FMath::Max(Range.X,Exit);
+   if(Enter<1 && Exit>=1) Range.Y=FMath::Min(Range.Y,Enter);
+  }
+  return Range;
+ };
  for(const auto& Route:Layout.Routes)
  {
   TArray<FVector> Left,Right;
@@ -78,6 +94,13 @@ void ACitixHillsideBuilder::Build(const FCitixHillsideLayout& Layout)
    const FVector SeamAllowance=(Route.Points[I]-Route.Points[I-1]).GetSafeNormal()*2.f;
    const FVector Start=Route.Points[I-1]-SeamAllowance,End=Route.Points[I]+SeamAllowance;
    RoadGeometry.Quad(Start-SpanOffset,End-SpanOffset,Start+SpanOffset,End+SpanOffset);
+   // Dead ends need a full-car stopping apron beyond the navigation endpoint.
+   const int32 EndNode=Network.Nodes.IndexOfByPredicate([&](const auto& N){return FVector(N.Position,N.Elevation).Equals(Route.Points[I],.01f);});
+   if(I==Route.Points.Num()-1 && Network.GetNodeDegree(EndNode)==1)
+   {
+    const FVector ApronEnd=End+(End-Start).GetSafeNormal()*600.f;
+    RoadGeometry.Quad(End-SpanOffset,ApronEnd-SpanOffset,End+SpanOffset,ApronEnd+SpanOffset);
+   }
    if(I<Route.Points.Num()-1)
    {
     const FVector NextOffset=RoadRight(Route.Points[I+1]-Route.Points[I])*(Route.Width*.5f);
@@ -95,8 +118,13 @@ void ACitixHillsideBuilder::Build(const FCitixHillsideLayout& Layout)
     }
    }
    const FVector Foundation(0,0,220);
-   RoadGeometry.Quad(Left[I-1],Left[I-1]-Foundation,Left[I],Left[I]-Foundation);
-   RoadGeometry.Quad(Right[I-1]-Foundation,Right[I-1],Right[I]-Foundation,Right[I]);
+   const auto Range=WallRange(Route.Points[I-1],Route.Points[I]);
+   if(Range.X<Range.Y)
+   {
+    const FVector L0=FMath::Lerp(Left[I-1],Left[I],Range.X),L1=FMath::Lerp(Left[I-1],Left[I],Range.Y),R0=FMath::Lerp(Right[I-1],Right[I],Range.X),R1=FMath::Lerp(Right[I-1],Right[I],Range.Y);
+    RockGeometry.Quad(L0,L0-Foundation,L1,L1-Foundation);
+    RockGeometry.Quad(R0-Foundation,R0,R1-Foundation,R1);
+   }
    if(!Route.bTunnel) continue;
    const FVector Roof(0,0,600);
    // Interior-facing roof and walls, with an exterior shell. The route remains
@@ -110,124 +138,166 @@ void ACitixHillsideBuilder::Build(const FCitixHillsideLayout& Layout)
    TunnelGeometry.Quad(Right[I-1]+Roof,Right[I-1]+Roof+Cap,Right[I]+Roof,Right[I]+Roof+Cap);
   }
  }
- // Cap route junctions using the nearest graded centreline height, avoiding
- // flat discs that protrude into ascending approaches.
- for(int32 I=0;I<Network.Nodes.Num();++I) if(Network.GetNodeDegree(I)>=3)
+ const float Cell=Layout.Settings.TerrainSpacing;
+ auto HeightAt=[&](FVector2D XY)
  {
-  const auto& Node=Network.Nodes[I]; const FVector Centre(Node.Position,Node.Elevation);
-  // The narrow road strips alone cannot support a car's ninety-degree turn.
-  float Radius=3000.f;
-  for(int32 Edge:Network.NodeEdgeIndices[I]) Radius=FMath::Max(Radius,Network.Edges[Edge].CorridorWidth*.5f);
-  // Keep widened caps inside short level approaches, especially the tunnel lip.
-  for(int32 Edge:Network.NodeEdgeIndices[I]) Radius=FMath::Min(Radius,FMath::Max(Network.EdgeLength(Edge),Network.Edges[Edge].CorridorWidth*.5f));
-  for(int32 Side=0;Side<24;++Side)
+  float Height=Layout.BaseTerrainHeight(XY),Closest=MAX_flt,RoadHeight=Height,Bed=0;
+  for(const auto& R:Layout.Routes)
   {
-   auto Ring=[&](int32 Index)
+   if(R.bBridge) continue;
+   if(R.bTunnel && FMath::Min(FVector2D::Distance(XY,FVector2D(R.Points[0])),FVector2D::Distance(XY,FVector2D(R.Points.Last())))>1800.f) continue;
+   for(int32 I=1;I<R.Points.Num();++I)
    {
-    const float Angle=2.f*PI*Index/24.f;
-    const FVector2D XY=Node.Position+FVector2D(FMath::Cos(Angle),FMath::Sin(Angle))*Radius;
-    float Height=MAX_flt;
-    // A nearest-edge tie can pick a level cross street and raise this cap
-    // above the ascending lane. Keep the infill beneath every approach;
-    // the actual road strips retain their independently correct surfaces.
-    for(int32 EdgeIndex:Network.NodeEdgeIndices[I])
+    const FVector2D A(R.Points[I-1]),D=FVector2D(R.Points[I])-A;
+    const float T=FMath::Clamp(FVector2D::DotProduct(XY-A,D)/D.SizeSquared(),0.,1.);
+    const float Distance=FVector2D::Distance(XY,A+D*T);
+    if(Distance<Closest) {Closest=Distance; RoadHeight=float(FMath::Lerp(R.Points[I-1].Z,R.Points[I].Z,T))-200.f; Bed=R.Width*.5f+Cell*1.45f;}
+   }
+  }
+  Height=FMath::Lerp(Height,RoadHeight,1.f-FMath::SmoothStep(Bed,Bed+1800.f,Closest));
+  for(const auto& House:Layout.Houses)
+  {
+   const FVector2D Local=(XY-FVector2D(House.Position)).GetRotated(-House.Yaw);
+   const float Outside=FMath::Max(FMath::Abs(float(Local.X))-float(House.Size.X)*.5f,FMath::Abs(float(Local.Y))-float(House.Size.Y)*.5f);
+   if(Outside<400) Height=FMath::Lerp(Height,float(House.Position.Z),1.f-FMath::SmoothStep(100.f,400.f,Outside));
+  }
+  return Height;
+ };
+ auto EmitTerrain=[&](const FVector& P,const FVector& Q,const FVector& R)
+ {
+  const FVector Normal=FVector::CrossProduct(Q-P,R-P).GetSafeNormal();
+  const float Elevation=(P.Z+Q.Z+R.Z)/3;
+  FSurface& Surface=Normal.Z<.82f || Elevation>7600 ? RockGeometry : Elevation>4000 ? DryGeometry : TerrainGeometry;
+  Surface.Triangle(P,Q,R);
+ };
+ auto TerrainTriangle=[&](FVector2D A,FVector2D B,FVector2D C)
+ {
+  TArray<FVector2D> Polygon;
+  const FVector2D Corners[]={A,B,C};
+  for(int32 I=0;I<3;++I)
+  {
+   const FVector2D P=Corners[I],Q=Corners[(I+1)%3];
+   const bool InP=Layout.ContainsLand(P),InQ=Layout.ContainsLand(Q);
+   if(InP) Polygon.Add(P);
+   if(InP!=InQ)
+   {
+    FVector2D Inside=InP ? P : Q,Outside=InP ? Q : P;
+    for(int32 Step=0;Step<20;++Step) {const auto Mid=(Inside+Outside)*.5; if(Layout.ContainsLand(Mid)) Inside=Mid; else Outside=Mid;}
+    Polygon.Add((Inside+Outside)*.5);
+   }
+  }
+  for(int32 I=1;I+1<Polygon.Num();++I)
+  {
+   const FVector P(Polygon[0],HeightAt(Polygon[0])),Q(Polygon[I],HeightAt(Polygon[I])),R(Polygon[I+1],HeightAt(Polygon[I+1]));
+   bool Clipped=false;
+   for(const auto& Route:Layout.Routes) if(Route.bTunnel)
+   {
+    const FVector2D Origin(Route.Points[0]),Delta=FVector2D(Route.Points.Last())-Origin,Forward=Delta.GetSafeNormal(),Across(-Forward.Y,Forward.X),XY((P+Q+R)/3);
+    const float T=FMath::Clamp(FVector2D::DotProduct(XY-Origin,Delta)/Delta.SizeSquared(),0.,1.);
+    const float Roof=FMath::Lerp(Route.Points[0].Z,Route.Points.Last().Z,T)+720;
+    if(FVector2D::Distance(XY,Origin+Delta*T)>Route.Width*.5f+Cell*1.5f || FMath::Min3(P.Z,Q.Z,R.Z)>Roof+Cell) continue;
+    // Polygon difference leaves the hillside exactly up to the bore walls. The
+    // roof seals the removed rectangle; no whole cells disappear around it.
+    TArray<FVector> Remaining={P,Q,R};
+    const FVector2D Axes[]={-Forward,Forward,-Across,Across};
+    const float Limits[]={0.f,float(Delta.Size()),Route.Width*.5f,Route.Width*.5f};
+    for(int32 Plane=0;Plane<4 && Remaining.Num()>=3;++Plane)
     {
-     const auto& Edge=Network.Edges[EdgeIndex];
-     const FVector2D A=Network.Nodes[Edge.NodeA].Position,Delta=Network.Nodes[Edge.NodeB].Position-A;
-     const float T=FMath::Clamp(FVector2D::DotProduct(XY-A,Delta)/Delta.SizeSquared(),0.,1.);
-     Height=FMath::Min(Height,float(Network.EdgePoint3D(EdgeIndex,T).Z));
+     TArray<FVector> Inside,Outside,Cuts;
+     for(int32 V=0;V<Remaining.Num();++V)
+     {
+      const FVector A=Remaining[V],B=Remaining[(V+1)%Remaining.Num()];
+      const double DA=FVector2D::DotProduct(FVector2D(A)-Origin,Axes[Plane])-Limits[Plane],DB=FVector2D::DotProduct(FVector2D(B)-Origin,Axes[Plane])-Limits[Plane];
+      (DA<=0 ? Inside : Outside).Add(A);
+      if((DA<=0)!=(DB<=0)) {const FVector Cut=FMath::Lerp(A,B,DA/(DA-DB)); Inside.Add(Cut); Outside.Add(Cut); Cuts.Add(Cut);}
+     }
+     if(Cuts.Num()==2)
+     {
+      FVector Floor[2],Top[2];
+      for(int32 V=0;V<2;++V)
+      {
+       const float Along=FMath::Clamp(FVector2D::DotProduct(FVector2D(Cuts[V])-Origin,Delta)/Delta.SizeSquared(),0.,1.);
+       Floor[V]=Cuts[V]; Floor[V].Z=FMath::Lerp(Route.Points[0].Z,Route.Points.Last().Z,Along)+720;
+       Top[V]=Cuts[V]; Top[V].Z=FMath::Max(Top[V].Z,Floor[V].Z);
+      }
+      RockGeometry.Quad(Floor[0],Floor[1],Top[0],Top[1]);
+      RockGeometry.Quad(Floor[1],Floor[0],Top[1],Top[0]);
+     }
+     for(int32 V=1;V+1<Outside.Num();++V) EmitTerrain(Outside[0],Outside[V],Outside[V+1]);
+     Remaining=MoveTemp(Inside);
     }
-    return FVector(XY,Height);
-   };
-   RoadGeometry.Triangle(Centre,Ring(Side),Ring(Side+1));
+    // Preserve the mountain surface above the roof; only remove material inside
+    // the driving bore. This closes sloping portal headers as well as the sides.
+    TArray<FVector> AboveRoof;
+    auto RoofHeight=[&](FVector V){const float Along=FMath::Clamp(FVector2D::DotProduct(FVector2D(V)-Origin,Delta)/Delta.SizeSquared(),0.,1.); return FMath::Lerp(Route.Points[0].Z,Route.Points.Last().Z,Along)+720;};
+    for(int32 V=0;V<Remaining.Num();++V)
+    {
+     const FVector A=Remaining[V],B=Remaining[(V+1)%Remaining.Num()];
+     const double DA=A.Z-RoofHeight(A),DB=B.Z-RoofHeight(B);
+     if(DA>=0) AboveRoof.Add(A);
+     if((DA>=0)!=(DB>=0)) AboveRoof.Add(FMath::Lerp(A,B,DA/(DA-DB)));
+    }
+    for(int32 V=1;V+1<AboveRoof.Num();++V) EmitTerrain(AboveRoof[0],AboveRoof[V],AboveRoof[V+1]);
+    Clipped=true; break;
+   }
+   if(!Clipped) EmitTerrain(P,Q,R);
   }
- }
- auto HeightAt=[&](const FVector2D& XY)
- {
-  if(XY.Y<-27500) return -500.f;
-  float Height,Distance;
-  if(!Network.FindSurfaceHeight(XY,Height,Distance)) return -500.f;
-  float TerrainHeight=Height-180.f+FMath::SmoothStep(1300.f,9000.f,Distance)*2000.f;
-  // Raise the hillside shell above the middle of the tunnel, retaining open
-  // approach cuttings at both ends. Floor traces start inside this shell.
-  for(const auto& Route:Layout.Routes) if(Route.bTunnel) for(int32 I=1;I<Route.Points.Num();++I)
-  {
-   const FVector2D A(Route.Points[I-1]),AB=FVector2D(Route.Points[I])-A;
-   const float T=FMath::Clamp(FVector2D::DotProduct(XY-A,AB)/AB.SizeSquared(),0.,1.);
-   const float Near=FVector2D::Distance(XY,A+AB*T);
-   const float Cover=FMath::SmoothStep(.08f,.2f,T)*(1.f-FMath::SmoothStep(.8f,.92f,T))*(1.f-FMath::SmoothStep(900.f,2300.f,Near));
-   TerrainHeight=FMath::Lerp(TerrainHeight,float(FMath::Lerp(Route.Points[I-1].Z,Route.Points[I].Z,T))+1100.f,Cover);
-  }
-  if(XY.X>-11000 && XY.X<9000 && XY.Y>0 && XY.Y<10000)
-   TerrainHeight=FMath::Min(TerrainHeight,2180.f);
-  return TerrainHeight;
  };
- // Broad faceted triangles give a coherent hillside silhouette, with no height
- // texture or imported landscape assets added to the build.
- constexpr float Cell=1000.f;
- struct FCell { bool bCut=false; TArray<FVector> Original,Actual; };
- TMap<FIntPoint,FCell> Cells;
- for(float X=-40000;X<40000;X+=Cell) for(float Y=-30000;Y<38000;Y+=Cell)
+ FBox2D Bounds(ForceInit); for(auto P:Layout.CoastBoundary) Bounds+=P;
+ for(float X=FMath::FloorToFloat(Bounds.Min.X/Cell)*Cell;X<Bounds.Max.X;X+=Cell) for(float Y=FMath::FloorToFloat(Bounds.Min.Y/Cell)*Cell;Y<Bounds.Max.Y;Y+=Cell)
  {
-  const FVector2D A(X,Y),B(X+Cell,Y),C(X,Y+Cell),D(X+Cell,Y+Cell);
-  const float HA=HeightAt(A),HB=HeightAt(B),HC=HeightAt(C),HD=HeightAt(D);
-  FCell Record; Record.Original={FVector(A,HA),FVector(B,HB),FVector(C,HC),FVector(D,HD)};
-  bool Cutting=false;
-  for(const auto& Route:Layout.Routes) if(Route.bTunnel) for(int32 I=1;I<Route.Points.Num();++I)
-  {
-   const FVector2D Start(Route.Points[I-1]),Delta=FVector2D(Route.Points[I])-Start,Middle=(A+D)*.5f;
-   const float T=FVector2D::DotProduct(Middle-Start,Delta)/Delta.SizeSquared();
-   const float Distance=FVector2D::Distance(Middle,Start+Delta*FMath::Clamp(T,0.f,1.f));
-   const float Floor=FMath::Lerp(Route.Points[I-1].Z,Route.Points[I].Z,FMath::Clamp(T,0.f,1.f));
-   // Terrain transitioning from below the road to above its roof otherwise
-   // creates a diagonal blocking sheet across the portal. Carve the approach
-   // volume while retaining hillside triangles entirely above the shell.
-   if(T>-.08f && T<1.08f && Distance<Route.Width*.5f+Cell && FMath::Min(FMath::Min(HA,HB),FMath::Min(HC,HD))<Floor+750.f)
-    Cutting=true;
-  }
-  Record.bCut=Cutting;
-  if(!Cutting) {Record.Actual=Record.Original; TerrainGeometry.Quad(Record.Actual[0],Record.Actual[1],Record.Actual[2],Record.Actual[3]);}
-  else
-  {
-   auto Floor=[&](const FVector2D& XY) {float Height,Distance; Network.FindSurfaceHeight(XY,Height,Distance); return FVector(XY,Height-180.f);};
-   // A carved approach has an excavation floor, never a hole into the sky.
-   Record.Actual={Floor(A),Floor(B),Floor(C),Floor(D)};
-   TerrainGeometry.Quad(Record.Actual[0],Record.Actual[1],Record.Actual[2],Record.Actual[3]);
-  }
-  Cells.Add(FIntPoint(FMath::RoundToInt((X+40000)/Cell),FMath::RoundToInt((Y+30000)/Cell)),MoveTemp(Record));
+  TerrainTriangle({X,Y},{X+Cell,Y},{X,Y+Cell});
+  TerrainTriangle({X,Y+Cell},{X+Cell,Y},{X+Cell,Y+Cell});
  }
- const FIntPoint Neighbours[]={{0,-1},{1,0},{0,1},{-1,0}};
- const int32 Ends[][2]={{0,1},{1,3},{3,2},{2,0}};
- for(const auto& Pair:Cells) if(Pair.Value.bCut) for(int32 Edge=0;Edge<4;++Edge)
+ // Irregular exposed coast and hillside retaining faces use the same faceted rock palette.
+ for(int32 I=0;I<Layout.CoastBoundary.Num();++I)
  {
-  const auto* Adjacent=Cells.Find(Pair.Key+Neighbours[Edge]);
-  if(!Adjacent || Adjacent->bCut) continue;
-  FVector BottomA=Pair.Value.Actual[Ends[Edge][0]],BottomB=Pair.Value.Actual[Ends[Edge][1]];
-  FVector TopA=Pair.Value.Original[Ends[Edge][0]],TopB=Pair.Value.Original[Ends[Edge][1]];
-  for(const auto& Route:Layout.Routes) if(Route.bTunnel) for(int32 I=1;I<Route.Points.Num();++I)
+  const auto A=Layout.CoastBoundary[I],B=Layout.CoastBoundary[(I+1)%Layout.CoastBoundary.Num()];
+  const int32 Steps=FMath::CeilToInt(FVector2D::Distance(A,B)/Cell);
+  for(int32 S=0;S<Steps;++S)
   {
-   const FVector2D Start(Route.Points[I-1]),Delta=FVector2D(Route.Points[I])-Start,Middle((BottomA+BottomB)*.5f);
-   const float T=FMath::Clamp(FVector2D::DotProduct(Middle-Start,Delta)/Delta.SizeSquared(),0.,1.);
-   if(FVector2D::Distance(Middle,Start+Delta*T)>Route.Width*.5f+100.f) continue;
-   // A boundary crossing over the tunnel stays above the roof. Side cutting
-   // faces reach the excavation floor; neither can block the driving volume.
-   const float Roof=FMath::Lerp(Route.Points[I-1].Z,Route.Points[I].Z,T)+720.f;
-   BottomA.Z=FMath::Max(BottomA.Z,double(Roof)); BottomB.Z=FMath::Max(BottomB.Z,double(Roof));
-   TopA.Z=FMath::Max(TopA.Z,BottomA.Z); TopB.Z=FMath::Max(TopB.Z,BottomB.Z);
+   const auto P=FMath::Lerp(A,B,float(S)/Steps),Q=FMath::Lerp(A,B,float(S+1)/Steps);
+   RockGeometry.Quad(FVector(P,HeightAt(P)),FVector(Q,HeightAt(Q)),FVector(P,-1200),FVector(Q,-1200));
   }
-  TerrainGeometry.Quad(TopA,TopB,BottomA,BottomB);
-  TerrainGeometry.Quad(TopB,TopA,BottomB,BottomA);
  }
- auto Skirt=[&](const FVector2D& A,const FVector2D& B)
+ for(const auto& R:Layout.Routes) for(int32 I=1;I<R.Points.Num();++I)
  {
-  TerrainGeometry.Quad(FVector(A,HeightAt(A)),FVector(B,HeightAt(B)),FVector(A,-1500),FVector(B,-1500));
- };
- for(float Y=-30000;Y<38000;Y+=Cell) {Skirt({-40000,Y},{-40000,Y+Cell}); Skirt({40000,Y+Cell},{40000,Y});}
- for(float X=-40000;X<40000;X+=Cell) {Skirt({X,38000},{X+Cell,38000}); Skirt({X+Cell,-30000},{X,-30000});}
- WaterGeometry.Quad({-100000,-150000,-100},{100000,-150000,-100},{-100000,-26000,-100},{100000,-26000,-100});
+  const FVector OriginalA=R.Points[I-1],OriginalB=R.Points[I];
+  const auto Range=WallRange(OriginalA,OriginalB);
+  if(R.bTunnel || Range.X>=Range.Y) continue;
+  const FVector A=FMath::Lerp(OriginalA,OriginalB,Range.X),B=FMath::Lerp(OriginalA,OriginalB,Range.Y),Right=RoadRight(B-A);
+  for(float Side:{-1.f,1.f})
+  {
+   const FVector P=A+Right*(R.Width*.5f*Side),Q=B+Right*(R.Width*.5f*Side);
+   const float HP=Layout.BaseTerrainHeight(FVector2D(P)),HQ=Layout.BaseTerrainHeight(FVector2D(Q));
+   const FVector BottomP(P.X,P.Y,FMath::Min(float(P.Z)-80,HP-80)),BottomQ(Q.X,Q.Y,FMath::Min(float(Q.Z)-80,HQ-80));
+   const FVector TopP(P.X,P.Y,float(P.Z)),TopQ(Q.X,Q.Y,float(Q.Z));
+   if(R.bBridge) RockGeometry.Quad(P,Q,P-FVector(0,0,120),Q-FVector(0,0,120));
+   else {RockGeometry.Quad(TopP,TopQ,BottomP,BottomQ); RockGeometry.Quad(TopQ,TopP,BottomQ,BottomP);}
+  }
+ }
+ // A few six-sided rock clusters add landmarks along slopes, with no new assets.
+ FRandomStream RockRng(Layout.Seed+410);
+ for(int32 I=0;I<35;++I)
+ {
+  const FVector2D XY(RockRng.FRandRange(Bounds.Min.X,Bounds.Max.X),RockRng.FRandRange(Bounds.Min.Y,Bounds.Max.Y));
+  float RoadZ,Distance;
+  if(!Layout.ContainsLand(XY) || !Network.FindSurfaceHeight(XY,RoadZ,Distance) || Distance<3500) continue;
+  if(Layout.Houses.ContainsByPredicate([&](const auto& H){return FVector::Dist2D(FVector(XY,0),H.Position)<2200;})) continue;
+  const float Radius=RockRng.FRandRange(200,600),Base=HeightAt(XY);
+  const FVector Top(XY+FVector2D(Radius*.2f,0),Base+Radius*1.5f);
+  for(int32 Face=0;Face<6;++Face)
+  {
+   const FVector A(XY+FVector2D(Radius,0).GetRotated(Face*60.f),Base-40),B(XY+FVector2D(Radius,0).GetRotated((Face+1)*60.f),Base-40);
+   RockGeometry.Triangle(A,B,Top);
+  }
+ }
+ WaterGeometry.Quad({-150000,-150000,0},{150000,-150000,0},{-150000,150000,0},{150000,150000,0});
  RoadGeometry.Apply(Roads,ECitixSurface::Asphalt);
- TerrainGeometry.Apply(Terrain,ECitixSurface::Grass);
+ TerrainGeometry.Apply(Terrain,ECitixSurface::HillsideGrass);
+ RockGeometry.Apply(Terrain,ECitixSurface::HillsideRock,true,1);
+ DryGeometry.Apply(Terrain,ECitixSurface::HillsideGrassDry,true,2);
  TunnelGeometry.Apply(Tunnel,ECitixSurface::FacadeConcrete);
- WaterGeometry.Apply(Water,ECitixSurface::Water,false);
+ WaterGeometry.Apply(Water,ECitixSurface::HillsideWater,false);
  BuildDetails(Layout);
 }

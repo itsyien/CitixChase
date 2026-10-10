@@ -79,6 +79,7 @@ USTRUCT(BlueprintType)
 struct FCitixRoadNetwork
 {
 	GENERATED_BODY()
+ uint32 GeometryHash=0;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Road")
 	TArray<FCitixRoadNode> Nodes;

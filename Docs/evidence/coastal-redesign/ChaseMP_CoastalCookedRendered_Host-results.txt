@@ -1,0 +1,12 @@
+[2026.10.10-00.40.21:852][691]LogCitix: [CitixChase] City identity acknowledged: player=Driver 02 seed=47821 hash=-1582468700 valid=1
+[2026.10.10-00.40.26:753][973]LogCitix: [CitixChaseTest] PASS countdown->pursuit (round 1).
+[2026.10.10-00.40.32:905][335]LogCitix: [CitixChaseTest] PASS five pass-through relays -> exits unlocked.
+[2026.10.10-00.40.36:953][569]LogCitix: [CitixChaseTest] PASS round 1 exit 2 finished: Runner wins: Runner escaped after four-second commitment.
+[2026.10.10-00.40.54:964][623]LogCitix: [CitixChaseTest] PASS round 2 pursuit (roles swapped).
+[2026.10.10-00.41.01:113][970]LogCitix: [CitixChaseTest] PASS first wreck: health 50, replacement spawned=2.
+[2026.10.10-00.41.01:114][970]LogCitix: [CitixChaseTest] PASS shockwave ragdoll active.
+[2026.10.10-00.41.04:748][189]LogCitix: [CitixChaseTest] PASS replacement rejected before 40 seconds, reserve retained.
+[2026.10.10-00.41.41:098][227]LogCitix: [CitixChaseTest] replacement claim attempt 2 -> entered.
+[2026.10.10-00.41.45:835][481]LogCitix: [CitixChaseTest] PASS round 2 finished: Chaser wins: Runner's second car destroyed.
+[2026.10.10-00.41.55:839][993]LogCitix: [CitixChaseTest] Match final: Driver 02 wins the match 2-0 — both press F to rematch - requesting rematch.
+[2026.10.10-00.41.55:856][994]LogCitix: [CitixChaseTest] PASS rematch restarted (round 1).

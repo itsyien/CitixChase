@@ -11,6 +11,8 @@
 #include "Components/SkyLightComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Core/CitixSurfaceLibrary.h"
+#include "Core/CitixCitySettings.h"
+#include "City/CitixCityGenerator.h"
 #include "Engine/DirectionalLight.h"
 #include "Engine/ExponentialHeightFog.h"
 #include "Engine/PostProcessVolume.h"
@@ -45,6 +47,8 @@ void ACitixTimeOfDay::BeginPlay()
 {
 	Super::BeginPlay();
 
+	for(TActorIterator<ACitixCityGenerator> It(GetWorld());It;++It) if(It->bHillsideMap) {StartHours=UCitixCitySettings::Get().Hillside.InitialHour; break;}
+
 	// Allow a fixed time from the command line, e.g. -CitixHour=21.5 for night shots.
 	float CommandHour = 0.f;
 	if (FParse::Value(FCommandLine::Get(), TEXT("CitixHour="), CommandHour))
@@ -64,7 +68,7 @@ void ACitixTimeOfDay::Tick(float DeltaSeconds)
 	{
 		// A locally generated clock must render the same server epoch as the host.
 		if (!bResolved) ResolveSceneActors();
-		Hours = FCitixChaseRules::SceneHour(Chase->GetServerWorldTimeSeconds());
+		Hours = FCitixChaseRules::SceneHour(Chase->GetServerWorldTimeSeconds(),Chase->bHillsideMap ? UCitixCitySettings::Get().Hillside.InitialHour : 19.f);
 		UpdateSky();
 		return;
 	}

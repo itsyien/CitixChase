@@ -239,6 +239,11 @@ enum class ECitixSurface : uint8
 	WaterDeep,
 	Embankment,
 	Bush,
+	HillsideGrass,
+	HillsideGrassDry,
+	HillsideRock,
+	HillsideRoof,
+	HillsideWater,
 
 	Count				UMETA(Hidden)
 };

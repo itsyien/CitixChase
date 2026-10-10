@@ -366,7 +366,7 @@ FTransform ACitixCityGenerator::GetPlayerSpawnTransform() const
 {
 	if (bHillsideMap)
 	{
-		const auto Layout=FCitixHillsideLayout::Build();
+		const auto Layout=FCitixHillsideLayout::Build(GetResolvedSeed());
 		return FTransform(FRotator(0,45,0),Layout.Spawns[0]+FVector(0,0,110));
 	}
 	const FVector2D Centre = (Plan.BoundsMin + Plan.BoundsMax) * 0.5f;
@@ -625,9 +625,15 @@ void ACitixCityGenerator::GenerateCity()
 	ResolvedSeed = (SeedOverride >= 0) ? SeedOverride : Settings.Seed;
 	if (bHillsideMap)
 	{
-		const auto Layout=FCitixHillsideLayout::Build();
-		Plan=FCitixCityPlan(); Plan.BoundsMin=FVector2D(-40000,-30000); Plan.BoundsMax=FVector2D(40000,38000);
+		HillsideLayout=FCitixHillsideLayout::Build(GetResolvedSeed()); const auto& Layout=HillsideLayout;
+		FBox2D LandBounds(ForceInit); for(const auto& P:Layout.CoastBoundary) LandBounds+=P;
+		Plan=FCitixCityPlan(); Plan.BoundsMin=LandBounds.Min; Plan.BoundsMax=LandBounds.Max;
 		RoadNetwork=Layout.BuildRoadNetwork(); Plan.Report.RoadCount=RoadNetwork.Edges.Num();
+        if(RoadNetwork.Edges.ContainsByPredicate([&](const auto& E){const FVector A(RoadNetwork.Nodes[E.NodeA].Position,RoadNetwork.Nodes[E.NodeA].Elevation),B(RoadNetwork.Nodes[E.NodeB].Position,RoadNetwork.Nodes[E.NodeB].Elevation); return FMath::Abs(A.Z-B.Z)>FVector::Dist2D(A,B)*Layout.Settings.MaxGrade+.01f;}))
+        {
+            GenerationSummary=TEXT("Hillside settings exceed the maximum road grade");
+            UE_LOG(LogCitix,Error,TEXT("[CitixHillside] %s"),*GenerationSummary); return;
+        }
 		FActorSpawnParameters Params; Params.Owner=this;
 		Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 		HillsideBuilder=GetWorld()->SpawnActor<ACitixHillsideBuilder>(ACitixHillsideBuilder::StaticClass(),FTransform::Identity,Params);
@@ -637,7 +643,7 @@ void ACitixCityGenerator::GenerateCity()
 		LandmarkLocations=HillsideBuilder->GetLandmarkLocations();
 		Rng.Initialize(ResolvedSeed+7717);
 		bGenerated=true;
-		GenerationSummary=FString::Printf(TEXT("Hillside Switchback / %d roads / 59 m elevation"),RoadNetwork.Edges.Num());
+		GenerationSummary=FString::Printf(TEXT("Hillside Switchback / %d roads / %.0f m summit"),RoadNetwork.Edges.Num(),Layout.Settings.SummitRoadHeight/100);
 		SpawnTraffic(); SpawnStreetLights(); SetRoadGraphDebug(RoadGraphDebug);
 		if (bLogStats) UE_LOG(LogCitix,Log,TEXT("[CitixHillside] Generated revision %d seed %d: %d nodes, %d edges"),Layout.Revision,ResolvedSeed,RoadNetwork.Nodes.Num(),RoadNetwork.Edges.Num());
 		return;
@@ -724,7 +730,7 @@ bool ACitixCityGenerator::IsDryFootprint(const FVector& P, const FVector2D& Half
   for(const FVector2D Offset:{FVector2D::ZeroVector,FVector2D(Half.X,Half.Y),FVector2D(Half.X,-Half.Y),FVector2D(-Half.X,Half.Y),FVector2D(-Half.X,-Half.Y)})
   {
    const FVector Corner=P+Rotation.RotateVector(FVector(Offset,0));
-   if(Corner.X<-40000 || Corner.X>40000 || Corner.Y<-27500 || Corner.Y>38000) return false;
+   if(!HillsideLayout.ContainsLand(FVector2D(Corner))) return false;
   }
   return true;
  }

@@ -86,7 +86,7 @@ bool FCitixHillsideLayoutTest::RunTest(const FString& Parameters)
    const FVector Previous=Route.Points[I-1];
    const float Run=FVector::Dist2D(P,Previous);
    TestTrue(TEXT("No degenerate road spans"),Run>1.f);
-   TestTrue(TEXT("Every road grade is at most twelve percent"),FMath::Abs(P.Z-Previous.Z)<=Run*.12f+.01f);
+   TestTrue(FString::Printf(TEXT("Road grade <=12%%: %s span %d grade %.3f from %s to %s"),*Route.Name,I,float(FMath::Abs(P.Z-Previous.Z)/Run),*Previous.ToCompactString(),*P.ToCompactString()),FMath::Abs(P.Z-Previous.Z)<=Run*.12f+.01f);
   }
  }
  TestTrue(TEXT("Genuine hillside elevation reaches sixty metres"),MaximumZ-MinimumZ>=5900.f);
@@ -138,6 +138,22 @@ bool FCitixHillsideLayoutTest::RunTest(const FString& Parameters)
  for(const FVector& Site:Layout.RelaySites)
   TestTrue(TEXT("Every relay candidate is on the authored road network"),Nodes.ContainsByPredicate([&](const FVector& N){return N.Equals(Site,.01f);}));
  if(Layout.Spawns.Num()==2) TestTrue(TEXT("Driver starts are separated by at least three hundred metres"),FVector::Dist2D(Layout.Spawns[0],Layout.Spawns[1])>=30000.f);
+ return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCitixCoastalCompositionTest,"CitixChase.Hillside.CoastalComposition",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FCitixCoastalCompositionTest::RunTest(const FString&)
+{
+ const auto Layout=FCitixHillsideLayout::Build();
+ float Summit=0;
+ for(const auto& Route:Layout.Routes) for(const auto& P:Route.Points) Summit=FMath::Max(Summit,float(P.Z));
+ TestTrue(TEXT("Mountain road hierarchy reaches approximately ninety metres"),Summit>=8500.f);
+ TestTrue(TEXT("Compact Mediterranean neighborhoods contain twenty-five to thirty-five houses"),Layout.Houses.Num()>=25 && Layout.Houses.Num()<=35);
+ const auto Again=FCitixHillsideLayout::Build(Layout.Seed);
+ TestEqual(TEXT("Seed reproduces environmental geometry"),Layout.BuildRoadNetwork().GetLayoutHash(),Again.BuildRoadNetwork().GetLayoutHash());
+ auto OtherLighting=Layout; OtherLighting.Settings.InitialHour+=1.f;
+ TestNotEqual(TEXT("Different daylight settings cannot pass multiplayer identity"),OtherLighting.BuildRoadNetwork().GetLayoutHash(),Layout.BuildRoadNetwork().GetLayoutHash());
+ const auto* Climb=Layout.Routes.FindByPredicate([](const auto& Route){return Route.Name==TEXT("Switchback Climb");});
+ TestTrue(TEXT("Five dominant hairpins have genuinely sampled climbing curves"),Climb && Climb->Points.Num()>=170);
  return true;
 }
 #endif

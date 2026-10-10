@@ -15,6 +15,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "City/CitixRoadNetwork.h"
+#include "City/CitixHillsideLayout.h"
 #include "City/CitixCityPlan.h"
 #include "CitixTypes.h"
 #include "CitixCityGenerator.generated.h"
@@ -61,6 +62,7 @@ public:
 
 	/** The routable road graph, built from the plan. */
 	const FCitixRoadNetwork& GetRoadNetwork() const { return RoadNetwork; }
+ const FCitixHillsideLayout& GetHillsideLayout() const {return HillsideLayout;}
 
 	/** Instanced geometry count (city, or preview when preview mode is on). */
 	UFUNCTION(BlueprintPure, Category = "Citix|Generation")
@@ -220,6 +222,7 @@ protected:
 
 	FCitixCityPlan Plan;
 	FCitixRoadNetwork RoadNetwork;
+ FCitixHillsideLayout HillsideLayout;
 	FRandomStream Rng;
 
 	TArray<FVector> LampLocations;

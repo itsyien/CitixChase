@@ -40,9 +40,11 @@ void CitixHillsideDriveProbeTick(ACitixDrivingPlayerController* PC)
  auto* Car=Cast<ACitixVehiclePawn>(PC->GetPawn()); if(!Car) return;
  if(Drive.Points.IsEmpty())
  {
-  const auto Layout=FCitixHillsideLayout::Build(); int32 Route=4;
+  const auto Layout=FCitixHillsideLayout::Build(); int32 Route=6;
   FParse::Value(FCommandLine::Get(),TEXT("CitixDriveRoute="),Route);
   if(!Layout.Routes.IsValidIndex(Route)) return;
+  int32 Profile=0; FParse::Value(FCommandLine::Get(),TEXT("CitixDriveCar="),Profile);
+  Car->SetCarAppearance(ECitixCarType(FMath::Clamp(Profile,0,int32(ECitixCarType::Count)-1)),Car->GetPaintColor());
   Drive.Points=Layout.Routes[Route].Points; Drive.Name=Layout.Routes[Route].Name;
   int32 StartNode=0; FParse::Value(FCommandLine::Get(),TEXT("CitixDriveStartNode="),StartNode);
   Drive.Points.RemoveAt(0,FMath::Clamp(StartNode,0,Drive.Points.Num()-2));
@@ -54,11 +56,11 @@ void CitixHillsideDriveProbeTick(ACitixDrivingPlayerController* PC)
   const float Yaw=(Drive.Points[1]-Drive.Points[0]).Rotation().Yaw;
   if(!ACitixCityGenerator::ValidateChaseSurface(World,Drive.Points[0]+FVector(0,0,100),FVector(240,110,85),Yaw,Car,Pose,false)) return;
   Car->SetRoundStartPose(Pose); Drive.Start=Drive.Logged=Now;
-  UE_LOG(LogCitix,Log,TEXT("[CitixHillsideDrive] START route=%s points=%d isolated-traffic=1 initial-pose=%s"),*Drive.Name,Drive.Points.Num(),*Pose.GetLocation().ToCompactString());
+  UE_LOG(LogCitix,Log,TEXT("[CitixHillsideDrive] START route=%s points=%d isolated-traffic=1 initial-pose=%s profile=%s"),*Drive.Name,Drive.Points.Num(),*Pose.GetLocation().ToCompactString(),FCitixCarLibrary::GetTypeName(Car->GetCarType()));
  }
  auto Key=[&](FKey K,bool Press,bool& Previous){if(Press!=Previous) {PC->InputKey(FInputKeyEventArgs::CreateSimulated(K,Press ? IE_Pressed : IE_Released,Press ? 1.f : 0.f)); Previous=Press;}};
  const FVector Location=Car->GetActorLocation();
- while(Drive.Next<Drive.Points.Num() && FVector::Dist2D(Location,Drive.Points[Drive.Next])<300.f) ++Drive.Next;
+ while(Drive.Next<Drive.Points.Num() && FVector::Dist2D(Location,Drive.Points[Drive.Next])<600.f) ++Drive.Next;
  if(Drive.Next>=Drive.Points.Num())
  {
   Key(EKeys::W,false,Drive.W); Key(EKeys::S,false,Drive.S); Key(EKeys::A,false,Drive.A); Key(EKeys::D,false,Drive.D); Drive.Done=true;
@@ -95,6 +97,9 @@ void CitixHillsideDriveProbeTick(ACitixDrivingPlayerController* PC)
  if(Now-Drive.Start>15 && Now-Drive.Stopped>12)
  {
   Key(EKeys::W,false,Drive.W); Key(EKeys::S,false,Drive.S); Key(EKeys::A,false,Drive.A); Key(EKeys::D,false,Drive.D); Drive.Done=true;
+  FHitResult Blocker; FCollisionQueryParams Query; Query.AddIgnoredActor(Car);
+  World->SweepSingleByChannel(Blocker,Location,Location+Car->GetActorForwardVector()*300,Car->GetActorQuat(),ECC_Visibility,FCollisionShape::MakeBox(FVector(230,95,55)),Query);
+  UE_LOG(LogCitix,Error,TEXT("[CitixHillsideDrive] blocker=%s point=%s normal=%s penetration=%d"),*GetNameSafe(Blocker.GetComponent()),*Blocker.ImpactPoint.ToCompactString(),*Blocker.ImpactNormal.ToCompactString(),Blocker.bStartPenetrating);
   UE_LOG(LogCitix,Error,TEXT("[CitixHillsideDrive] STUCK route=%s point=%d location=%s"),*Drive.Name,Drive.Next,*Location.ToCompactString());
  }
 #endif
